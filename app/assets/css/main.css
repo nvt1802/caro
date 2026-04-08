@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@theme {
+  --color-caro-bg-dark: #09150f;
+  --color-caro-bg-deep: #06120c;
+  --color-caro-accent: #9ed8b0;
+  --color-caro-text: #e7f3eb;
+  --color-caro-x: #8ecae6;
+  --color-caro-o: #f2cc8f;
+  --font-caro: "Alegreya Sans", sans-serif;
+  --shadow-toast: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --animate-caro-pulse: caro-pulse 1s infinite;
+}
+
+@keyframes caro-pulse {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--color-caro-text);
+    background:
+      radial-gradient(circle at top, rgba(91, 140, 113, 0.35), transparent 30%),
+      radial-gradient(circle at bottom right, rgba(176, 123, 59, 0.18), transparent 32%),
+      linear-gradient(160deg, var(--color-caro-bg-dark) 0%, #11261b 55%, #07110c 100%);
+    font-family: var(--font-caro);
+  }
+}

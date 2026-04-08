@@ -1,0 +1,9 @@
+{
+  "session_id": "omx-1775545022735-a879kl",
+  "started_at": "2026-04-07T06:57:02.777Z",
+  "cwd": "/home/nvt/projects/test-omx",
+  "pid": 5381,
+  "platform": "linux",
+  "pid_start_ticks": 21643,
+  "pid_cmdline": "node /home/nvt/.nvm/versions/node/v25.9.0/bin/omx"
+}
