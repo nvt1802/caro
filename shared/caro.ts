@@ -42,6 +42,7 @@ export interface RoomSnapshot {
   timeLeft: number
   updatedAt: string
   name: string
+  isAi?: boolean
 }
 
 export interface RoomListItem {
@@ -54,6 +55,7 @@ export interface RoomListItem {
   canJoin: boolean
   name: string
   isPrivate: boolean
+  isAi?: boolean
 }
 
 export interface ClientMoveMessage {

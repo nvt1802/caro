@@ -5,6 +5,7 @@ import { useCaroGame } from '~/composables/useCaroGame'
 import CaroScoreboard from '~/components/CaroScoreboard.vue'
 import CaroBoard from '~/components/CaroBoard.vue'
 import CaroChat from '~/components/CaroChat.vue'
+import BaseDialog from '~/components/BaseDialog.vue'
 
 const route = useRoute()
 const roomCode = route.params.code as string
@@ -31,7 +32,8 @@ const {
   loadingCell,
   isChatting,
   verifyAccess,
-  connect
+  connect,
+  myMark
 } = useCaroGame()
 
 const isVerified = ref(false)
@@ -77,7 +79,7 @@ onMounted(async () => {
 
   // Check access first
   const result = await verifyAccess(roomCode)
-  
+
   if (result.success) {
     isVerified.value = true
     // If we arrived here without being "connected" yet (e.g. direct link)
@@ -102,6 +104,34 @@ const ghostButtonClass = 'rounded-xl border border-[rgba(179,224,193,0.12)] bg-t
 const statusCardClass = 'flex items-center gap-4 rounded-[18px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] px-[18px] py-3 backdrop-blur-[18px]'
 
 const canRestart = computed(() => connectionState.value === 'connected' && myRole.value === 'host')
+
+const showWinnerDialog = ref(false)
+const winnerInfo = computed(() => {
+  if (!snapshot.value || snapshot.value.status !== 'finished') return null
+
+  if (snapshot.value.winner === 'draw') {
+    return { title: 'Hòa cờ!', message: 'Trận đấu kết thúc với kết quả Hòa.', color: 'text-amber-400' }
+  }
+
+  const isMe = snapshot.value.winner === myMark.value
+  const winnerMark = snapshot.value.winner
+  const winnerPlayer = snapshot.value.players.find(p => p.role === (winnerMark === 'X' ? 'host' : 'guest'))
+  const winnerName = winnerPlayer?.name || 'Đối thủ'
+
+  return {
+    title: isMe ? 'Bạn đã thắng! 🎉' : 'Bạn đã thua...',
+    message: isMe ? 'Tuyệt vời, bạn đã đánh bại đối thủ!' : `${winnerName} đã giành chiến thắng ván này.`,
+    color: isMe ? 'text-caro-accent' : 'text-red-400'
+  }
+})
+
+watch(() => snapshot.value?.status, (status) => {
+  if (status === 'finished') {
+    showWinnerDialog.value = true
+  } else {
+    showWinnerDialog.value = false
+  }
+})
 </script>
 
 <template>
@@ -125,22 +155,12 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
     <section class="grid gap-6 xl:grid-cols-[350px_minmax(0,1fr)_320px] xl:items-start">
       <!-- Left Column: Score & Info -->
       <aside class="order-2 grid gap-5 xl:order-none">
-        <CaroScoreboard
-          v-if="snapshot"
-          :snapshot="snapshot"
-          :myRole="myRole"
-          :mySeatLabel="mySeatLabel"
-          :scoreboard="scoreboard"
-          :timeLeft="timeLeft"
-          @ready="toggleReady"
-          @start="startGame"
-        />
+        <CaroScoreboard v-if="snapshot" :snapshot="snapshot" :myRole="myRole" :mySeatLabel="mySeatLabel"
+          :scoreboard="scoreboard" :timeLeft="timeLeft" @ready="toggleReady" @start="startGame" />
 
         <div v-if="canRestart || notice" :class="panelClass">
-          <div
-            v-if="notice"
-            class="mb-3 rounded-[10px] border border-[rgba(200,165,87,0.2)] bg-[rgba(200,165,87,0.1)] p-2.5 text-[0.9rem] text-[#f5d79a]"
-          >
+          <div v-if="notice"
+            class="mb-3 rounded-[10px] border border-[rgba(200,165,87,0.2)] bg-[rgba(200,165,87,0.1)] p-2.5 text-[0.9rem] text-[#f5d79a]">
             {{ notice }}
           </div>
           <div v-if="canRestart">
@@ -161,30 +181,41 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
 
       <!-- Center: The Board -->
       <div class="order-1 xl:order-none">
-        <CaroBoard
-          :snapshot="snapshot"
-          :canPlayCell="canPlayCell"
-          :loadingCell="loadingCell"
-          @play="playCell"
-        />
-        
-        <div v-if="!snapshot && connectionState === 'connecting'" class="flex flex-col items-center justify-center p-20 animate-pulse">
-           <div class="h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-caro-accent mb-4" />
-           <p class="text-white">Đang tải dữ liệu trận đấu...</p>
+        <CaroBoard :snapshot="snapshot" :canPlayCell="canPlayCell" :loadingCell="loadingCell" @play="playCell" />
+
+        <div v-if="!snapshot && connectionState === 'connecting'"
+          class="flex flex-col items-center justify-center p-20 animate-pulse">
+          <div class="h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-caro-accent mb-4" />
+          <p class="text-white">Đang tải dữ liệu trận đấu...</p>
         </div>
       </div>
 
       <!-- Right: Chat -->
-      <CaroChat
-        v-if="snapshot"
-        class="order-3 xl:order-none"
-        v-model="chatInput"
-        :history="chatHistory"
-        :myRole="myRole"
-        :isChatting="isChatting"
-        @send="sendChatMessage"
-      />
+      <CaroChat v-if="snapshot" class="order-3 xl:order-none" v-model="chatInput" :history="chatHistory"
+        :myRole="myRole" :isChatting="isChatting" @send="sendChatMessage" />
     </section>
+
+    <!-- Winner Dialog -->
+    <BaseDialog :show="showWinnerDialog" :title="winnerInfo?.title || 'Kết quả'" @close="showWinnerDialog = false">
+      <div v-if="winnerInfo" class="space-y-4 text-center py-4">
+        <div class="inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-white/5 mb-2">
+          <span :class="['text-5xl font-bold', winnerInfo.color]">
+            {{ snapshot?.winner === 'draw' ? '=' : snapshot?.winner }}
+          </span>
+        </div>
+        <h3 :class="['text-2xl font-bold', winnerInfo.color]">{{ winnerInfo.title }}</h3>
+        <p class="text-[rgba(231,243,235,0.7)]">{{ winnerInfo.message }}</p>
+      </div>
+
+      <template #footer>
+        <button :class="ghostButtonClass" @click="handleLeave">Rời phòng</button>
+        <button v-if="canRestart"
+          :class="['rounded-xl bg-caro-accent px-6 py-2.5 font-bold text-caro-bg-deep transition']"
+          @click="restartMatch">
+          Đấu tiếp
+        </button>
+      </template>
+    </BaseDialog>
   </div>
 
   <!-- Loading State before verification -->

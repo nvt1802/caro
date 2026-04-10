@@ -97,6 +97,24 @@ export function useCaroGame() {
     }
   }
 
+  function notifyResult(
+    newSnapshot: RoomSnapshot,
+    oldStatus: string | undefined,
+  ) {
+    if (newSnapshot.status === "finished" && oldStatus === "playing") {
+      if (newSnapshot.winner === "draw") {
+        showToast("Trận đấu kết thúc với kết quả Hòa!");
+      } else if (newSnapshot.winner === myMark.value) {
+        showToast("Tuyệt vời! Bạn là người chiến thắng! 🎉");
+      } else {
+        const winnerName = newSnapshot.players.find(
+          (p) => p.role === (newSnapshot.winner === "X" ? "host" : "guest"),
+        )?.name;
+        showToast(`${winnerName} đã giành chiến thắng.`);
+      }
+    }
+  }
+
   const unsubscribeAll = async () => {
     const promises = [];
     if (roomChannel) {
@@ -168,11 +186,11 @@ export function useCaroGame() {
     myRole.value = me ? (me.role as "host" | "guest") : null;
 
     notifyTurn(newSnapshot.turn, newSnapshot.status, oldStatus, oldTurn);
+    notifyResult(newSnapshot, oldStatus);
     return newSnapshot;
   };
 
   const connect = async (
-    role: "host" | "guest",
     roomCode: string,
     name: string,
   ) => {
@@ -266,7 +284,7 @@ export function useCaroGame() {
     }
   };
 
-  const createRoom = async () => {
+  const createRoom = async (isAi: boolean = false) => {
     if (!userName.value.trim()) {
       notice.value = "Vui lòng nhập tên của bạn.";
       return;
@@ -283,12 +301,13 @@ export function useCaroGame() {
           name: userName.value,
           roomName: roomNameInput.value,
           password: roomPasswordInput.value,
+          isAi,
         }),
       });
       const result = await resp.json();
       if (resp.ok) {
         roomCodeInput.value = code;
-        await connect("host", code, userName.value);
+        await connect(code, userName.value);
       } else {
         notice.value = result.message;
       }
@@ -343,7 +362,7 @@ export function useCaroGame() {
       });
       const result = await resp.json();
       if (resp.ok) {
-        await connect("guest", targetRoomCode, userName.value);
+        await connect(targetRoomCode, userName.value);
       } else {
         notice.value = result.message;
       }

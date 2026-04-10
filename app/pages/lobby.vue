@@ -23,6 +23,7 @@ const {
 const showPasswordDialog = ref(false)
 const passwordToJoin = ref('')
 const joiningRoom = ref<RoomListItem | null>(null)
+const isAi = ref(false)
 
 // Redirect to home if name is not set
 onMounted(() => {
@@ -34,7 +35,7 @@ onMounted(() => {
 })
 
 const handleCreate = async () => {
-  await createRoom()
+  await createRoom(isAi.value)
   if (roomCodeInput.value) {
     navigateTo(`/room/${roomCodeInput.value}`)
   }
@@ -117,6 +118,12 @@ const ghostButtonClass = 'rounded-xl border border-[rgba(179,224,193,0.12)] bg-t
             <div>
               <label class="text-[0.7rem] uppercase tracking-wider text-[rgba(231,243,235,0.5)] mb-1 block">Mật khẩu (để trống nếu muốn phòng công khai)</label>
               <input v-model="roomPasswordInput" type="password" :class="inputClass" placeholder="Nhập mật khẩu..." />
+            </div>
+            <div class="flex items-center gap-3 py-2 cursor-pointer group" @click="isAi = !isAi">
+              <div :class="['w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all', isAi ? 'bg-caro-accent border-caro-accent' : 'border-[rgba(179,224,193,0.12)] bg-white/5 group-hover:border-caro-accent/50']">
+                <Icon v-if="isAi" name="mdi:check" class="text-caro-bg-deep text-lg font-bold" />
+              </div>
+              <span class="text-sm font-medium text-[rgba(231,243,235,0.8)] group-hover:text-white transition-colors">Chơi với máy (AI Mode)</span>
             </div>
           </div>
 
