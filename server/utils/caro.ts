@@ -3,6 +3,7 @@ import {
   type GameStatus,
   type Mark,
   type MoveState,
+  type RoomListItem,
   type Role,
   type RoomSnapshot,
   cloneBoard,
@@ -54,6 +55,29 @@ const rooms = globalThis.__testOmxCaroRooms ?? new Map<string, RoomState>()
 
 globalThis.__testOmxCaroRooms = rooms
 
+const lobbyPeers = new Set<RoomPeer>()
+
+export function addToLobby(peer: RoomPeer) {
+  lobbyPeers.add(peer)
+  // Immediate update for the new lobby peer
+  peer.send(JSON.stringify({ type: 'room-list', rooms: listRoomItems() }))
+}
+
+export function removeFromLobby(peer: RoomPeer) {
+  lobbyPeers.delete(peer)
+}
+
+export function broadcastRoomList() {
+  const payload = JSON.stringify({ type: 'room-list', rooms: listRoomItems() })
+  for (const peer of lobbyPeers) {
+    try {
+      peer.send(payload)
+    } catch {
+      lobbyPeers.delete(peer)
+    }
+  }
+}
+
 export function getRoom(code: string) {
   return rooms.get(normalizeRoomCode(code)) ?? null
 }
@@ -87,6 +111,7 @@ export function getOrCreateHostRoom(code: string) {
   }
 
   rooms.set(normalizedCode, room)
+  broadcastRoomList()
   return room
 }
 
@@ -123,11 +148,13 @@ export function attachPeer(room: RoomState, role: Role, peer: RoomPeer, name: st
   if (room.status === 'playing' && !room.timerId) {
     startTurnTimer(room)
   }
+  broadcastRoomList()
   return true
 }
 
 export function detachPeer(room: RoomState, peer: RoomPeer) {
-  if (room.host.peer?.id === peer.id) {
+  const isHost = room.host.peer?.id === peer.id
+  if (isHost) {
     room.host.peer = null
   }
 
@@ -136,7 +163,22 @@ export function detachPeer(room: RoomState, peer: RoomPeer) {
   }
 
   room.updatedAt = Date.now()
-  syncRoomState(room)
+
+  if (isHost) {
+    if (room.guest.peer) {
+      sendError(room.guest.peer, 'Chủ phòng đã rời đi, phòng bị giải tán.')
+      // No need to close explicitly here, the client will handle it or wait for close.
+      // But clearing snapshot on client is important.
+    }
+    if (room.timerId) {
+      clearInterval(room.timerId)
+      room.timerId = null
+    }
+    rooms.delete(room.code)
+  } else {
+    syncRoomState(room)
+  }
+  broadcastRoomList()
 }
 
 export function getPeerRole(room: RoomState, peer: RoomPeer): Role | null {
@@ -163,6 +205,7 @@ export function resetRoom(room: RoomState) {
   if (room.host.peer) room.host.peer.ready = false
   if (room.guest.peer) room.guest.peer.ready = false
   syncRoomState(room)
+  broadcastRoomList()
   startTurnTimer(room)
 }
 
@@ -188,6 +231,7 @@ export function startGame(room: RoomState) {
   room.updatedAt = Date.now()
 
   sendSnapshot(room)
+  broadcastRoomList()
   startTurnTimer(room)
 }
 
@@ -290,6 +334,7 @@ export function applyMove(room: RoomState, role: Role, row: number, col: number)
   }
 
   room.updatedAt = Date.now()
+  broadcastRoomList()
   return null
 }
 
@@ -311,6 +356,24 @@ export function snapshotRoom(room: RoomState): RoomSnapshot {
     timeLeft: room.timeLeft,
     updatedAt: new Date(room.updatedAt).toISOString()
   }
+}
+
+export function listRoomItems(): RoomListItem[] {
+  return [...rooms.values()]
+    .map((room) => {
+      const connectedCount = connectedPlayerCount(room)
+
+      return {
+        code: room.code,
+        hostName: room.host.name,
+        guestName: room.guest.name,
+        connectedCount,
+        status: room.status,
+        updatedAt: new Date(room.updatedAt).toISOString(),
+        canJoin: connectedCount < 2
+      }
+    })
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 }
 
 export function sendSnapshot(room: RoomState) {

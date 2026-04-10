@@ -5,12 +5,14 @@ import CaroSetup from './components/CaroSetup.vue'
 import CaroScoreboard from './components/CaroScoreboard.vue'
 import CaroBoard from './components/CaroBoard.vue'
 import CaroChat from './components/CaroChat.vue'
+import RoomListPanel from './components/RoomListPanel.vue'
 import AppToast from './components/AppToast.vue'
 
 const {
   userName,
   roomCodeInput,
   snapshot,
+  roomList,
   notice,
   connectionState,
   myRole,
@@ -22,12 +24,14 @@ const {
   toasts,
   createRoom,
   joinRoom,
+  fetchRoomList,
   toggleReady,
   startGame,
   playCell,
   restartMatch,
   sendChatMessage,
-  canPlayCell
+  canPlayCell,
+  leaveRoom
 } = useCaroGame()
 
 const panelClass = 'rounded-[24px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] p-5 backdrop-blur-[18px]'
@@ -97,6 +101,7 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
           <span class="text-xs uppercase text-[rgba(231,243,235,0.62)]">Trạng thái bàn cờ</span>
           <strong>{{ boardStateLabel }}</strong>
         </div>
+        <button v-if="snapshot" :class="ghostButtonClass" @click="leaveRoom">Rời phòng</button>
       </div>
     </section>
 
@@ -152,11 +157,20 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
       />
 
       <CaroChat
+        v-if="snapshot"
         class="order-3 xl:order-none"
         v-model="chatInput"
         :history="chatHistory"
         :myRole="myRole"
         @send="sendChatMessage"
+      />
+
+      <RoomListPanel
+        v-else
+        class="order-3 xl:order-none"
+        :rooms="roomList"
+        @join="joinRoom"
+        @refresh="fetchRoomList"
       />
     </section>
 

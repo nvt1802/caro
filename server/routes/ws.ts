@@ -8,10 +8,11 @@ import {
   getPeerRole,
   resetRoom,
   addChatMessage,
-  sendError,
   sendSnapshot,
   toggleReady,
-  startGame
+  startGame,
+  addToLobby,
+  removeFromLobby
 } from '../utils/caro'
 import { isClientMessage, normalizePlayerName, normalizeRoomCode } from '#shared/caro'
 
@@ -23,8 +24,7 @@ export default defineWebSocketHandler({
     const name = normalizePlayerName(requestUrl.searchParams.get('name') ?? '')
 
     if (!roomCode) {
-      sendError(peer, 'Thiếu mã phòng.')
-      peer.close()
+      addToLobby(peer)
       return
     }
 
@@ -112,6 +112,7 @@ export default defineWebSocketHandler({
   close(peer) {
     const room = findRoomByPeer(peer)
     if (!room) {
+      removeFromLobby(peer)
       return
     }
 

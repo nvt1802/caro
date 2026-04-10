@@ -43,6 +43,16 @@ export interface RoomSnapshot {
   updatedAt: string
 }
 
+export interface RoomListItem {
+  code: string
+  hostName: string
+  guestName: string
+  connectedCount: number
+  status: GameStatus
+  updatedAt: string
+  canJoin: boolean
+}
+
 export interface ClientMoveMessage {
   type: 'move'
   row: number
