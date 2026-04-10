@@ -3,7 +3,7 @@ import { createNewRoomRow } from "../../utils/caro";
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
-  const { code, name, roomName, password } = body;
+  const { code, name, roomName, password, isAi } = body;
 
   if (!code || !name) {
     throw createError({
@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const client = await serverSupabaseClient(event);
-  const newRoom = createNewRoomRow(code, name, roomName, password);
+  const newRoom = createNewRoomRow(code, name, roomName, password, isAi);
 
   const { data, error } = await (client.from("caro_rooms") as any)
     .insert([newRoom])

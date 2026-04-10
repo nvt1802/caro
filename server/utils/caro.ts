@@ -42,6 +42,7 @@ export interface RoomRow {
   recent_chat: ChatMessage[];
   time_left: number;
   updated_at: string;
+  is_ai: boolean;
 }
 
 /**
@@ -52,6 +53,7 @@ export function createNewRoomRow(
   hostName: string,
   roomName?: string,
   password?: string,
+  isAi?: boolean,
 ): Partial<RoomRow> {
   const normalizedCode = normalizeRoomCode(code);
   const snapshot = createInitialSnapshot(normalizedCode);
@@ -61,11 +63,11 @@ export function createNewRoomRow(
     name: roomName || "Phòng Caro",
     password: password || undefined,
     host_name: normalizePlayerName(hostName),
-    guest_name: "Guest",
+    guest_name: isAi ? "Máy (BOT)" : "Guest",
     host_connected: true,
-    guest_connected: false,
+    guest_connected: isAi,
     host_ready: false,
-    guest_ready: false,
+    guest_ready: isAi,
     status: "waiting",
     board: snapshot.board,
     turn: snapshot.turn,
@@ -74,6 +76,7 @@ export function createNewRoomRow(
     scores: snapshot.scores,
     recent_chat: [],
     time_left: TURN_TIME_LIMIT,
+    is_ai: isAi ?? false,
   };
 }
 
@@ -140,6 +143,104 @@ export function processMove(
 }
 
 /**
+ * Heuristic scoring for AI to find the best move.
+ */
+function evaluateMove(board: Cell[][], r: number, c: number, mark: Mark): number {
+  const opponentMark: Mark = mark === "X" ? "O" : "X";
+  let totalScore = 0;
+
+  const directions = [
+    [1, 0], [0, 1], [1, 1], [1, -1]
+  ];
+
+  for (const [dr, dc] of directions) {
+    const aiPatterns = checkLinePatterns(board, r, c, dr, dc, mark);
+    const opPatterns = checkLinePatterns(board, r, c, dr, dc, opponentMark);
+
+    // Defensive is slightly higher priority than offensive unless AI can win
+    if (aiPatterns.count >= 5) totalScore += 100000;
+    else if (opPatterns.count >= 5) totalScore += 50000;
+    else if (aiPatterns.count === 4 && aiPatterns.openSides > 0) totalScore += 10000;
+    else if (opPatterns.count === 4 && opPatterns.openSides > 0) totalScore += 8000;
+    else if (aiPatterns.count === 3 && aiPatterns.openSides === 2) totalScore += 3000;
+    else if (opPatterns.count === 3 && opPatterns.openSides === 2) totalScore += 2000;
+    else totalScore += aiPatterns.count * 10 + opPatterns.count * 5;
+  }
+
+  return totalScore;
+}
+
+function checkLinePatterns(board: Cell[][], r: number, c: number, dr: number, dc: number, mark: Mark) {
+  let count = 1;
+  let openSides = 0;
+
+  // Check forward
+  for (let i = 1; i < 5; i++) {
+    const nr = r + dr * i, nc = c + dc * i;
+    if (nr < 0 || nr >= board.length || nc < 0 || nc >= board[0]!.length) break;
+    if (board[nr]![nc] === mark) count++;
+    else {
+      if (!board[nr]![nc]) openSides++;
+      break;
+    }
+  }
+  // Check backward
+  for (let i = 1; i < 5; i++) {
+    const nr = r - dr * i, nc = c - dc * i;
+    if (nr < 0 || nr >= board.length || nc < 0 || nc >= board[0]!.length) break;
+    if (board[nr]![nc] === mark) count++;
+    else {
+      if (!board[nr]![nc]) openSides++;
+      break;
+    }
+  }
+
+  return { count, openSides };
+}
+
+export function calculateAIMove(board: Cell[][], aiMark: Mark): { r: number, c: number } | null {
+  let bestScore = -1;
+  let bestMoves: { r: number, c: number }[] = [];
+
+  // Scopes the search area to cells near existing marks to improve performance
+  const searchArea: { r: number, c: number }[] = [];
+  for (let r = 0; r < board.length; r++) {
+    for (let c = 0; c < board[r]!.length; c++) {
+      if (board[r]![c]) continue;
+      
+      let hasNeighbor = false;
+      for (let i = -2; i <= 2; i++) {
+        for (let j = -2; j <= 2; j++) {
+          const nr = r + i, nc = c + j;
+          if (nr >= 0 && nr < board.length && nc >= 0 && nc < (board[nr]?.length || 0) && board[nr]![nc]) {
+            hasNeighbor = true;
+            break;
+          }
+        }
+        if (hasNeighbor) break;
+      }
+
+      if (hasNeighbor || (r === 10 && c === 10)) { // Center if empty
+        searchArea.push({ r, c });
+      }
+    }
+  }
+
+  for (const { r, c } of searchArea) {
+    const score = evaluateMove(board, r, c, aiMark);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMoves = [{ r, c }];
+    } else if (score === bestScore) {
+      bestMoves.push({ r, c });
+    }
+  }
+
+  if (bestMoves.length === 0) return null;
+  return bestMoves[Math.floor(Math.random() * bestMoves.length)]!;
+}
+
+/**
  * Processes a chat message.
  */
 export function processChat(
@@ -200,6 +301,7 @@ export function rowToSnapshot(row: RoomRow): RoomSnapshot {
     timeLeft: row.time_left,
     updatedAt: row.updated_at,
     name: row.name,
+    isAi: row.is_ai,
   };
 }
 
@@ -219,5 +321,6 @@ export function rowToListItem(row: RoomRow): RoomListItem {
     canJoin: connectedCount < 2,
     name: row.name,
     isPrivate: !!row.password,
+    isAi: row.is_ai,
   };
 }
