@@ -1,4 +1,4 @@
-import { ref, computed, watch, onMounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import {
   type RoomSnapshot,
   type RoomListItem,
@@ -9,6 +9,7 @@ import {
 } from "#shared/caro";
 
 export function useCaroGame() {
+  const supabase = useSupabaseClient();
   const userName = ref("");
   const roomCodeInput = ref("");
   const snapshot = ref<RoomSnapshot | null>(null);
@@ -20,11 +21,12 @@ export function useCaroGame() {
   const myRole = ref<"host" | "guest" | null>(null);
   const chatInput = ref("");
   const toasts = ref<{ id: number; text: string }[]>([]);
+  const isLoading = ref(false);
+  const loadingCell = ref<{ row: number; col: number } | null>(null);
   let toastIdCounter = 0;
 
-  let socket: WebSocket | null = null;
-  let manualClose = false;
-  let roomListTimer: number | null = null;
+  let roomChannel: any = null;
+  let lobbyChannel: any = null;
 
   const mySeatLabel = computed(() => {
     if (!myRole.value) return "Đang xem...";
@@ -48,7 +50,8 @@ export function useCaroGame() {
     ) {
       return false;
     }
-    if (!myMark.value || snapshot.value.board[row][col]) {
+    const board = snapshot.value.board;
+    if (!myMark.value || !board || !board[row] || board[row][col]) {
       return false;
     }
     return myMark.value === snapshot.value.turn;
@@ -78,87 +81,160 @@ export function useCaroGame() {
     }
   }
 
-  const connect = (role: "host" | "guest", roomCode: string, name: string) => {
-    if (socket) {
-      manualClose = true;
-      socket.close();
+  const unsubscribeAll = () => {
+    if (roomChannel) {
+      supabase.removeChannel(roomChannel);
+      roomChannel = null;
+    }
+  };
+
+  const fetchRoomSnapshot = async (code: string) => {
+    const { data, error } = await supabase
+      .from("caro_rooms")
+      .select("*")
+      .eq("code", code)
+      .single();
+
+    if (error || !data) {
+      if (myRole.value === 'guest') {
+        showToast("Chủ phòng đã rời đi, phòng bị giải tán.");
+        leaveRoom();
+      } else {
+        notice.value = "Không tìm thấy phòng hoặc lỗi khi tải.";
+      }
+      return null;
     }
 
-    manualClose = false;
+    // Adapt DB row to Snapshot format
+    const row = data as any;
+    const newSnapshot: RoomSnapshot = {
+      code: row.code,
+      board: row.board,
+      turn: row.turn,
+      winner: row.winner,
+      status: row.status,
+      winningLine: row.winning_line,
+      lastMove: null,
+      players: [
+        { role: 'host', name: row.host_name, connected: row.host_connected, ready: row.host_ready },
+        { role: 'guest', name: row.guest_name, connected: row.guest_connected, ready: row.guest_ready }
+      ],
+      scores: row.scores,
+      recentChat: row.recent_chat,
+      timeLeft: row.time_left,
+      updatedAt: row.updated_at
+    };
+
+    const oldTurn = snapshot.value?.turn;
+    const oldStatus = snapshot.value?.status;
+    snapshot.value = newSnapshot;
+    notifyTurn(newSnapshot.turn, newSnapshot.status, oldStatus, oldTurn);
+    return newSnapshot;
+  };
+
+  const connect = async (role: "host" | "guest", roomCode: string, name: string) => {
+    unsubscribeAll();
     myRole.value = role;
     userName.value = name;
     roomCodeInput.value = roomCode;
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws?room=${roomCode}&role=${role}&name=${encodeURIComponent(
-      name,
-    )}`;
-
     connectionState.value = "connecting";
-    socket = new WebSocket(url);
 
-    socket.onopen = () => {
-      connectionState.value = "connected";
-      notice.value = "";
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get("room") !== roomCode) {
-        window.history.replaceState({}, "", `?room=${roomCode}`);
-      }
-    };
-
-    socket.onmessage = (event) => {
-      let payload: any;
-      try {
-        payload = JSON.parse(event.data);
-      } catch (err) {
-        return;
-      }
-
-      if (payload.type === "error") {
-        notice.value = payload.message;
-        return;
-      }
-
-      if (payload.type === "snapshot") {
-        const oldTurn = snapshot.value?.turn;
-        const oldStatus = snapshot.value?.status;
-        snapshot.value = payload.room;
-        notifyTurn(
-          snapshot.value!.turn,
-          snapshot.value!.status,
-          oldStatus,
-          oldTurn,
-        );
-      }
-
-      if (payload.type === "room-list") {
-        roomList.value = payload.rooms ?? [];
-      }
-    };
-
-    socket.onclose = () => {
-      if (!manualClose) {
-        connectionState.value = "closed";
-        notice.value = "Mất kết nối với máy chủ.";
-      }
-    };
-
-    socket.onerror = () => {
+    const currentSnapshot = await fetchRoomSnapshot(roomCode);
+    if (!currentSnapshot) {
       connectionState.value = "error";
-      notice.value = "Lỗi kết nối WebSocket.";
-    };
+      return;
+    }
+
+    connectionState.value = "connected";
+    notice.value = "";
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("room") !== roomCode) {
+      window.history.replaceState({}, "", `?room=${roomCode}`);
+    }
+
+    // Subscribe to DB changes for this room
+    roomChannel = supabase.channel(`room:${roomCode}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'caro_rooms', filter: `code=eq.${roomCode}` },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            if (myRole.value === 'guest') {
+              showToast("Chủ phòng đã rời đi, phòng bị giải tán.");
+              leaveRoom();
+            }
+          } else {
+            const oldGuest = snapshot.value?.players.find(p => p.role === 'guest')?.name;
+            fetchRoomSnapshot(roomCode).then((newSnap) => {
+              if (newSnap && myRole.value === 'host') {
+                const newGuest = newSnap.players.find(p => p.role === 'guest')?.name;
+                if (oldGuest !== 'Guest' && newGuest === 'Guest') {
+                  showToast("Người chơi kia đã rời đi, đang chờ người mới...");
+                }
+              }
+            });
+          }
+        }
+      )
+      .subscribe();
   };
 
-  const createRoom = () => {
+  const sendRoomAction = async (type: string, data: any = {}) => {
+    if (!snapshot.value || !myRole.value) return;
+    
+    try {
+      isLoading.value = true;
+      const response = await fetch("/api/game/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: snapshot.value.code,
+          role: myRole.value,
+          type,
+          ...data
+        })
+      });
+      
+      const result = await response.json();
+      if (!response.ok) {
+        showToast(result.message || "Lỗi khi thực hiện hành động.");
+      }
+    } catch (err) {
+      showToast("Lỗi mạng khi kết nối máy chủ.");
+    } finally {
+      isLoading.value = false;
+    }
+  };
+
+  const createRoom = async () => {
     if (!userName.value.trim()) {
       notice.value = "Vui lòng nhập tên của bạn.";
       return;
     }
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    connect("host", code, userName.value);
+    
+    try {
+      isLoading.value = true;
+      const resp = await fetch("/api/game/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, name: userName.value })
+      });
+      const result = await resp.json();
+      if (resp.ok) {
+        connect("host", code, userName.value);
+      } else {
+        notice.value = result.message;
+      }
+    } catch (err) {
+      notice.value = "Lỗi khi tạo phòng.";
+    } finally {
+      isLoading.value = false;
+    }
   };
 
-  const joinRoom = (roomCodeOverride?: string) => {
+  const joinRoom = async (roomCodeOverride?: string) => {
     if (!userName.value.trim()) {
       notice.value = "Vui lòng nhập tên của bạn.";
       return;
@@ -172,87 +248,79 @@ export function useCaroGame() {
       notice.value = "Mã phòng không hợp lệ.";
       return;
     }
-    connect("guest", targetRoomCode, userName.value);
-  };
 
-  const playCell = (row: number, col: number) => {
-    if (
-      !canPlayCell(row, col) ||
-      !socket ||
-      socket.readyState !== WebSocket.OPEN
-    ) {
-      return;
+    try {
+      isLoading.value = true;
+      const resp = await fetch("/api/game/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: targetRoomCode, name: userName.value })
+      });
+      const result = await resp.json();
+      if (resp.ok) {
+        connect("guest", targetRoomCode, userName.value);
+      } else {
+        notice.value = result.message;
+      }
+    } catch (err) {
+      notice.value = "Lỗi khi tham gia phòng.";
+    } finally {
+      isLoading.value = false;
     }
-    socket.send(JSON.stringify({ type: "move", row, col }));
   };
 
-  const toggleReady = () => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "ready" }));
+  const playCell = async (row: number, col: number) => {
+    if (!canPlayCell(row, col)) return;
+    loadingCell.value = { row, col };
+    try {
+      await sendRoomAction("move", { row, col });
+    } finally {
+      loadingCell.value = null;
+    }
   };
 
-  const startGame = () => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "start" }));
-  };
-
-  const restartMatch = () => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "restart" }));
-  };
+  const toggleReady = () => sendRoomAction("ready");
+  const startGame = () => sendRoomAction("start");
+  const restartMatch = () => sendRoomAction("restart");
 
   const sendChatMessage = () => {
-    if (
-      !chatInput.value.trim() ||
-      !socket ||
-      socket.readyState !== WebSocket.OPEN
-    ) {
-      return;
-    }
-    socket.send(JSON.stringify({ type: "chat", text: chatInput.value }));
+    if (!chatInput.value.trim()) return;
+    sendRoomAction("chat", { text: chatInput.value });
     chatInput.value = "";
   };
 
   const fetchRoomList = async () => {
     if (snapshot.value) return;
-
     try {
       const response = await fetch("/api/rooms");
-      if (!response.ok) {
-        throw new Error("room-list-fetch-failed");
+      if (response.ok) {
+        const payload = await response.json();
+        roomList.value = payload.rooms ?? [];
       }
-
-      const payload = (await response.json()) as { rooms?: RoomListItem[] };
-      roomList.value = payload.rooms ?? [];
-    } catch {
+    } catch (err) {
       roomList.value = [];
     }
   };
 
   const connectLobby = () => {
-    if (snapshot.value || (socket && socket.readyState === WebSocket.OPEN))
-      return;
+    if (snapshot.value || lobbyChannel) return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws`;
-
-    socket = new WebSocket(url);
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === "room-list") {
-          roomList.value = payload.rooms ?? [];
+    fetchRoomList();
+    lobbyChannel = supabase.channel('lobby')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'caro_rooms' },
+        () => {
+          fetchRoomList();
         }
-      } catch {}
-    };
+      )
+      .subscribe();
   };
 
   onMounted(() => {
     userName.value = window.localStorage.getItem("caro-user-name") ?? "";
     const savedRoom = window.sessionStorage.getItem("caro-room-code") ?? "";
-    const savedRole = window.sessionStorage.getItem(
-      "caro-room-role",
-    ) as Role | null;
+    const savedRole = window.sessionStorage.getItem("caro-room-role") as Role | null;
 
     const urlParams = new URLSearchParams(window.location.search);
     const roomFromUrl = normalizeRoomCode(urlParams.get("room") ?? "");
@@ -267,6 +335,24 @@ export function useCaroGame() {
     if (!snapshot.value) {
       connectLobby();
     }
+
+    // Handle tab closing
+    window.addEventListener('beforeunload', () => {
+      if (snapshot.value && myRole.value) {
+        // Use keepalive fetch if possible, or just send it and hope for the best.
+        // On Vercel, it might not finish, but it's the best we can do without Presence webhooks.
+        fetch("/api/game/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          keepalive: true,
+          body: JSON.stringify({
+            code: snapshot.value.code,
+            role: myRole.value,
+            type: 'leave'
+          })
+        });
+      }
+    });
   });
 
   watch(userName, (val) => window.localStorage.setItem("caro-user-name", val));
@@ -280,14 +366,17 @@ export function useCaroGame() {
   watch(snapshot, (val) => {
     if (!val) {
       connectLobby();
+    } else if (lobbyChannel) {
+      supabase.removeChannel(lobbyChannel);
+      lobbyChannel = null;
     }
   });
 
-  const leaveRoom = () => {
-    if (socket) {
-      manualClose = true;
-      socket.close();
+  const leaveRoom = async () => {
+    if (snapshot.value && myRole.value) {
+      await sendRoomAction("leave");
     }
+    unsubscribeAll();
     snapshot.value = null;
     connectionState.value = "idle";
     myRole.value = null;
@@ -319,5 +408,7 @@ export function useCaroGame() {
     restartMatch,
     sendChatMessage,
     canPlayCell,
+    isLoading,
+    loadingCell,
   };
 }

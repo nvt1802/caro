@@ -17,7 +17,8 @@ export default defineNuxtConfig({
     '@nuxt/eslint',
     '@nuxt/image',
     '@nuxt/icon',
-    '@nuxt/scripts'
+    '@nuxt/scripts',
+    '@nuxtjs/supabase'
   ],
   vite: {
     plugins: [tailwindcss()]

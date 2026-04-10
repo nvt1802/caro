@@ -4,22 +4,29 @@ import type { RoomSnapshot, Mark } from '#shared/caro'
 const props = defineProps<{
   snapshot: RoomSnapshot | null
   canPlayCell: (row: number, col: number) => boolean
+  loadingCell?: { row: number; col: number } | null
 }>()
 
 const emit = defineEmits<{
   (e: 'play', row: number, col: number): void
 }>()
 
+function isCellLoading(r: number, c: number) {
+  return props.loadingCell?.row === r && props.loadingCell?.col === c
+}
+
 function cellClasses(row: number, col: number, val: Mark | null) {
   const isLast = props.snapshot?.lastMove?.row === row && props.snapshot?.lastMove?.col === col
   const isWinning = props.snapshot?.winningLine.some(([r, c]) => r === row && c === col)
   const isPlayable = props.canPlayCell(row, col)
+  const isLoading = isCellLoading(row, col)
 
   return [
-    'flex h-10 w-10 items-center justify-center rounded-md border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.03)] transition duration-150 disabled:cursor-not-allowed disabled:opacity-100',
-    isPlayable ? 'cursor-pointer hover:border-[rgba(158,216,176,0.3)] hover:bg-[rgba(158,216,176,0.1)]' : '',
+    'relative flex h-10 w-10 items-center justify-center rounded-md border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.03)] transition duration-150 disabled:cursor-not-allowed disabled:opacity-100',
+    isPlayable && !isLoading ? 'cursor-pointer hover:border-[rgba(158,216,176,0.3)] hover:bg-[rgba(158,216,176,0.1)]' : '',
     isLast ? 'border-2 border-caro-accent' : '',
-    isWinning ? 'bg-[rgba(74,164,111,0.3)]' : ''
+    isWinning ? 'bg-[rgba(74,164,111,0.3)]' : '',
+    isLoading ? 'opacity-70' : ''
   ]
 }
 </script>
@@ -35,11 +42,12 @@ function cellClasses(row: number, col: number, val: Mark | null) {
           v-for="(cell, cIdx) in line"
           :key="cIdx"
           :class="cellClasses(rIdx, cIdx, cell)"
-          :disabled="!canPlayCell(rIdx, cIdx)"
+          :disabled="!canPlayCell(rIdx, cIdx) || isCellLoading(rIdx, cIdx)"
           @click="emit('play', rIdx, cIdx)"
         >
+          <div v-if="isCellLoading(rIdx, cIdx)" class="h-4 w-4 animate-spin rounded-full border-2 border-[rgba(255,255,255,0.1)] border-t-caro-accent" />
           <span
-            v-if="cell"
+            v-else-if="cell"
             :class="[
               'text-[1.4rem] font-extrabold',
               cell === 'X' ? 'text-caro-x' : 'text-caro-o'
