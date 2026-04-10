@@ -16,396 +16,173 @@ import {
   type ChatMessage
 } from '#shared/caro'
 
-type RoomPeer = {
+// No more local rooms Map or lobbyPeers Set.
+// State management is now handled by the server API routes calling Supabase.
+
+/**
+ * Data structure used for the database row.
+ */
+export interface RoomRow {
   id: string
-  send: (payload: string) => void
-  ready?: boolean
-}
-
-type AssignedPlayer = {
-  name: string
-  peer: RoomPeer | null
-}
-
-type RoomState = {
   code: string
-  hostCreated: boolean
-  createdAt: number
-  updatedAt: number
-  host: AssignedPlayer
-  guest: AssignedPlayer
+  host_name: string
+  guest_name: string
+  host_connected: boolean
+  guest_connected: boolean
+  host_ready: boolean
+  guest_ready: boolean
+  status: GameStatus
   board: Cell[][]
   turn: Mark
   winner: Mark | 'draw' | null
-  status: GameStatus
-  winningLine: Array<[number, number]>
-  lastMove: MoveState | null
+  winning_line: Array<[number, number]>
   scores: Record<Mark, number>
-  recentChat: ChatMessage[]
-  timeLeft: number
-  timerId?: any
+  recent_chat: ChatMessage[]
+  time_left: number
+  updated_at: string
 }
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __testOmxCaroRooms: Map<string, RoomState> | undefined
-}
-
-const rooms = globalThis.__testOmxCaroRooms ?? new Map<string, RoomState>()
-
-globalThis.__testOmxCaroRooms = rooms
-
-const lobbyPeers = new Set<RoomPeer>()
-
-export function addToLobby(peer: RoomPeer) {
-  lobbyPeers.add(peer)
-  // Immediate update for the new lobby peer
-  peer.send(JSON.stringify({ type: 'room-list', rooms: listRoomItems() }))
-}
-
-export function removeFromLobby(peer: RoomPeer) {
-  lobbyPeers.delete(peer)
-}
-
-export function broadcastRoomList() {
-  const payload = JSON.stringify({ type: 'room-list', rooms: listRoomItems() })
-  for (const peer of lobbyPeers) {
-    try {
-      peer.send(payload)
-    } catch {
-      lobbyPeers.delete(peer)
-    }
-  }
-}
-
-export function getRoom(code: string) {
-  return rooms.get(normalizeRoomCode(code)) ?? null
-}
-
-export function getOrCreateHostRoom(code: string) {
+/**
+ * Creates a new room row object (initial state).
+ */
+export function createNewRoomRow(code: string, hostName: string): Partial<RoomRow> {
   const normalizedCode = normalizeRoomCode(code)
-  const existing = rooms.get(normalizedCode)
-  if (existing) {
-    existing.hostCreated = true
-    existing.updatedAt = Date.now()
-    return existing
-  }
-
   const snapshot = createInitialSnapshot(normalizedCode)
-  const room: RoomState = {
-    code: snapshot.code,
-    hostCreated: true,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    host: { name: 'Host', peer: null },
-    guest: { name: 'Guest', peer: null },
+  
+  return {
+    code: normalizedCode,
+    host_name: normalizePlayerName(hostName),
+    guest_name: 'Guest',
+    host_connected: true,
+    guest_connected: false,
+    host_ready: false,
+    guest_ready: false,
+    status: 'waiting',
     board: snapshot.board,
     turn: snapshot.turn,
     winner: snapshot.winner,
-    status: snapshot.status,
-    winningLine: snapshot.winningLine,
-    lastMove: snapshot.lastMove,
-    scores: { X: 0, O: 0 },
-    recentChat: [],
-    timeLeft: TURN_TIME_LIMIT
+    winning_line: snapshot.winningLine,
+    scores: snapshot.scores,
+    recent_chat: [],
+    time_left: TURN_TIME_LIMIT
   }
-
-  rooms.set(normalizedCode, room)
-  broadcastRoomList()
-  return room
 }
 
-export function getRoomForGuest(code: string) {
-  const room = getRoom(code)
-  if (!room || !room.hostCreated) {
-    return null
+/**
+ * Validates a move and returns the updated state fields.
+ */
+export function processMove(row: RoomRow, role: Role, r: number, c: number): Partial<RoomRow> | string {
+  const mark: Mark = role === 'host' ? 'X' : 'O'
+
+  if (row.status !== 'playing' || row.winner) {
+    return 'Ván đấu chưa bắt đầu hoặc đã kết thúc.'
   }
 
-  return room
-}
-
-export function findRoomByPeer(peer: RoomPeer) {
-  for (const room of rooms.values()) {
-    if (room.host.peer?.id === peer.id || room.guest.peer?.id === peer.id) {
-      return room
-    }
+  if (row.turn !== mark) {
+    return `Chưa tới lượt ${mark}.`
   }
 
-  return null
-}
-
-export function attachPeer(room: RoomState, role: Role, peer: RoomPeer, name: string) {
-  const slot = role === 'host' ? room.host : room.guest
-  if (slot.peer && slot.peer.id !== peer.id) {
-    return false
+  if (!Number.isInteger(r) || !Number.isInteger(c)) {
+    return 'Tọa độ nước đi không hợp lệ.'
   }
 
-  slot.name = normalizePlayerName(name)
-  slot.peer = peer
-  slot.peer.ready = false
-  room.updatedAt = Date.now()
-  syncRoomState(room)
-  if (room.status === 'playing' && !room.timerId) {
-    startTurnTimer(room)
-  }
-  broadcastRoomList()
-  return true
-}
-
-export function detachPeer(room: RoomState, peer: RoomPeer) {
-  const isHost = room.host.peer?.id === peer.id
-  if (isHost) {
-    room.host.peer = null
+  if (r < 0 || c < 0 || r >= row.board.length || c >= row.board[r]!.length) {
+    return 'Ô đó nằm ngoài bàn cờ.'
   }
 
-  if (room.guest.peer?.id === peer.id) {
-    room.guest.peer = null
+  if (row.board[r]![c]) {
+    return 'Ô này đã được chọn.'
   }
 
-  room.updatedAt = Date.now()
+  const newBoard = cloneBoard(row.board)
+  newBoard[r]![c] = mark
+  
+  const winningLine = createWinningLine(newBoard, r, c, mark) ?? []
+  let status = row.status
+  let winner = row.winner
+  const scores = { ...row.scores }
+  let turn = row.turn
 
-  if (isHost) {
-    if (room.guest.peer) {
-      sendError(room.guest.peer, 'Chủ phòng đã rời đi, phòng bị giải tán.')
-      // No need to close explicitly here, the client will handle it or wait for close.
-      // But clearing snapshot on client is important.
-    }
-    if (room.timerId) {
-      clearInterval(room.timerId)
-      room.timerId = null
-    }
-    rooms.delete(room.code)
+  if (winningLine.length >= 5) {
+    winner = mark
+    status = 'finished'
+    scores[mark] += 1
+  } else if (newBoard.every(line => line.every(cell => cell))) {
+    winner = 'draw'
+    status = 'finished'
   } else {
-    syncRoomState(room)
-  }
-  broadcastRoomList()
-}
-
-export function getPeerRole(room: RoomState, peer: RoomPeer): Role | null {
-  if (room.host.peer?.id === peer.id) {
-    return 'host'
+    turn = mark === 'X' ? 'O' : 'X'
   }
 
-  if (room.guest.peer?.id === peer.id) {
-    return 'guest'
+  return {
+    board: newBoard,
+    status,
+    winner,
+    winning_line: winningLine,
+    scores,
+    turn,
+    updated_at: new Date().toISOString()
   }
-
-  return null
 }
 
-export function resetRoom(room: RoomState) {
-  room.board = createEmptyBoard()
-  room.turn = 'X'
-  room.winner = null
-  room.status = 'waiting'
-  room.winningLine = []
-  room.lastMove = null
-  room.timeLeft = TURN_TIME_LIMIT
-  room.updatedAt = Date.now()
-  if (room.host.peer) room.host.peer.ready = false
-  if (room.guest.peer) room.guest.peer.ready = false
-  syncRoomState(room)
-  broadcastRoomList()
-  startTurnTimer(room)
-}
-
-export function toggleReady(room: RoomState, role: Role) {
-  const player = role === 'host' ? room.host : room.guest
-  if (!player.peer) return
-  player.peer.ready = !player.peer.ready
-  sendSnapshot(room)
-}
-
-export function startGame(room: RoomState) {
-  if (room.status !== 'waiting') return
-  if (!room.host.peer || !room.guest.peer) return
-  if (!room.guest.peer.ready) return
-
-  room.status = 'playing'
-  room.board = createEmptyBoard()
-  room.winner = null
-  room.winningLine = []
-  room.lastMove = null
-  room.turn = Math.random() < 0.5 ? 'X' : 'O'
-  room.timeLeft = TURN_TIME_LIMIT
-  room.updatedAt = Date.now()
-
-  sendSnapshot(room)
-  broadcastRoomList()
-  startTurnTimer(room)
-}
-
-export function addChatMessage(room: RoomState, role: Role, text: string) {
-  const name = role === 'host' ? room.host.name : room.guest.name
+/**
+ * Processes a chat message.
+ */
+export function processChat(row: RoomRow, role: Role, text: string): Partial<RoomRow> {
+  const name = role === 'host' ? row.host_name : row.guest_name
   const msg: ChatMessage = {
     sender: role,
     name,
     text,
     time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
   }
-  room.recentChat.push(msg)
-  if (room.recentChat.length > 50) {
-    room.recentChat.shift()
-  }
-  sendSnapshot(room)
-}
-
-function startTurnTimer(room: RoomState) {
-  if (room.timerId) {
-    clearInterval(room.timerId)
-    room.timerId = null
+  
+  const recent_chat = [...row.recent_chat, msg]
+  if (recent_chat.length > 50) {
+    recent_chat.shift()
   }
 
-  if (room.status !== 'playing') {
-    return
-  }
-
-  room.timeLeft = TURN_TIME_LIMIT
-  room.timerId = setInterval(() => {
-    if (room.status !== 'playing' || connectedPlayerCount(room) < 2) {
-      clearInterval(room.timerId)
-      return
-    }
-
-    room.timeLeft -= 1
-    if (room.timeLeft <= 0) {
-      // Hết giờ: Xử lý thua cuộc hoặc đổi lượt. 
-      // Ở đây ta đơn giản là đổi lượt nếu chưa đi, hoặc tính thua.
-      // Để game "gắt" hơn, ta tính người hiện tại THUA.
-      room.winner = room.turn === 'X' ? 'O' : 'X'
-      room.status = 'finished'
-      room.scores[room.winner] += 1
-      clearInterval(room.timerId)
-      sendSnapshot(room)
-    } else {
-      // Gửi snapshot mỗi giây có vẻ hơi nặng, nhưng để timer mượt thì cần.
-      // Hoặc chỉ gửi khi timeLeft thay đổi đáng kể. Hãy gửi mỗi giây cho realtime.
-      sendSnapshot(room)
-    }
-  }, 1000)
-}
-
-export function applyMove(room: RoomState, role: Role, row: number, col: number) {
-  const mark = role === 'host' ? 'X' : 'O'
-
-  if (room.status !== 'playing' || room.winner) {
-    return 'Ván đấu chưa bắt đầu hoặc đã kết thúc.'
-  }
-
-  if (room.turn !== mark) {
-    return `Chưa tới lượt ${mark}.`
-  }
-
-  if (!Number.isInteger(row) || !Number.isInteger(col)) {
-    return 'Tọa độ nước đi không hợp lệ.'
-  }
-
-  if (row < 0 || col < 0 || row >= room.board.length || col >= room.board[row]!.length) {
-    return 'Ô đó nằm ngoài bàn cờ.'
-  }
-
-  if (room.board[row]![col]) {
-    return 'Ô này đã được chọn.'
-  }
-
-  room.board[row]![col] = mark
-  room.lastMove = { row, col, mark }
-  room.winningLine = createWinningLine(room.board, row, col, mark) ?? []
-
-  if (room.winningLine.length >= 5) {
-    room.winner = mark
-    room.status = 'finished'
-    room.scores[mark] += 1
-    if (room.timerId) clearInterval(room.timerId)
-  } else if (room.board.every(line => line.every(cell => cell))) {
-    room.winner = 'draw'
-    room.status = 'finished'
-    if (room.timerId) {
-      clearInterval(room.timerId)
-      room.timerId = null
-    }
-  } else {
-    room.turn = mark === 'X' ? 'O' : 'X'
-    if (connectedPlayerCount(room) < 2) {
-      room.status = 'waiting'
-    } else {
-      startTurnTimer(room)
-    }
-  }
-
-  room.updatedAt = Date.now()
-  broadcastRoomList()
-  return null
-}
-
-export function snapshotRoom(room: RoomState): RoomSnapshot {
   return {
-    code: room.code,
-    board: cloneBoard(room.board),
-    turn: room.turn,
-    winner: room.winner,
-    status: room.status,
-    winningLine: [...room.winningLine],
-    lastMove: room.lastMove ? { ...room.lastMove } : null,
+    recent_chat,
+    updated_at: new Date().toISOString()
+  }
+}
+
+/**
+ * Converts a DB row to a RoomSnapshot for the client.
+ */
+export function rowToSnapshot(row: RoomRow): RoomSnapshot {
+  return {
+    code: row.code,
+    board: row.board,
+    turn: row.turn,
+    winner: row.winner,
+    status: row.status,
+    winningLine: row.winning_line,
+    lastMove: null, // We could derive this if needed
     players: [
-      { role: 'host', name: room.host.name, connected: Boolean(room.host.peer), ready: Boolean(room.host.peer?.ready) },
-      { role: 'guest', name: room.guest.name, connected: Boolean(room.guest.peer), ready: Boolean(room.guest.peer?.ready) }
+      { role: 'host', name: row.host_name, connected: row.host_connected, ready: row.host_ready },
+      { role: 'guest', name: row.guest_name, connected: row.guest_connected, ready: row.guest_ready }
     ],
-    scores: { ...room.scores },
-    recentChat: [...room.recentChat],
-    timeLeft: room.timeLeft,
-    updatedAt: new Date(room.updatedAt).toISOString()
+    scores: row.scores,
+    recentChat: row.recent_chat,
+    timeLeft: row.time_left,
+    updatedAt: row.updated_at
   }
 }
 
-export function listRoomItems(): RoomListItem[] {
-  return [...rooms.values()]
-    .map((room) => {
-      const connectedCount = connectedPlayerCount(room)
-
-      return {
-        code: room.code,
-        hostName: room.host.name,
-        guestName: room.guest.name,
-        connectedCount,
-        status: room.status,
-        updatedAt: new Date(room.updatedAt).toISOString(),
-        canJoin: connectedCount < 2
-      }
-    })
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-}
-
-export function sendSnapshot(room: RoomState) {
-  const payload = JSON.stringify({ type: 'snapshot', room: snapshotRoom(room) })
-  for (const peer of [room.host.peer, room.guest.peer]) {
-    peer?.send(payload)
+/**
+ * Converts a DB row to a RoomListItem for the lobby.
+ */
+export function rowToListItem(row: RoomRow): RoomListItem {
+  const connectedCount = (row.host_connected ? 1 : 0) + (row.guest_connected ? 1 : 0)
+  return {
+    code: row.code,
+    hostName: row.host_name,
+    guestName: row.guest_name,
+    connectedCount,
+    status: row.status,
+    updatedAt: row.updated_at,
+    canJoin: connectedCount < 2
   }
-}
-
-export function sendError(peer: RoomPeer, message: string) {
-  peer.send(JSON.stringify({ type: 'error', message }))
-}
-
-function syncRoomState(room: RoomState) {
-  if (room.winner) {
-    room.status = 'finished'
-    return
-  }
-
-  const count = connectedPlayerCount(room)
-  if (count < 2) {
-    room.status = 'waiting'
-    if (room.host.peer) room.host.peer.ready = false
-    if (room.guest.peer) room.guest.peer.ready = false
-    return
-  }
-
-  if (room.status !== 'playing') {
-    room.status = 'waiting'
-  }
-}
-
-function connectedPlayerCount(room: RoomState) {
-  return Number(Boolean(room.host.peer)) + Number(Boolean(room.guest.peer))
 }

@@ -31,7 +31,9 @@ const {
   restartMatch,
   sendChatMessage,
   canPlayCell,
-  leaveRoom
+  leaveRoom,
+  isLoading,
+  loadingCell
 } = useCaroGame()
 
 const panelClass = 'rounded-[24px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] p-5 backdrop-blur-[18px]'
@@ -153,6 +155,7 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
         class="order-1 xl:order-none"
         :snapshot="snapshot"
         :canPlayCell="canPlayCell"
+        :loadingCell="loadingCell"
         @play="playCell"
       />
 
@@ -174,13 +177,16 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
       />
     </section>
 
-    <div
-      v-if="resultLabel"
-      class="fixed bottom-10 left-1/2 z-[100] -translate-x-1/2 rounded-full bg-[#ffcc66] px-[30px] py-2.5 font-extrabold text-caro-bg-deep"
-    >
-      {{ resultLabel }}
-    </div>
-
     <AppToast :items="toasts" />
+
+    <!-- Loading Overlay (Global) -->
+    <Teleport to="body">
+      <div v-if="isLoading && !loadingCell" class="fixed inset-0 z-[999] flex items-center justify-center bg-[rgba(6,18,12,0.6)] backdrop-blur-[4px]">
+        <div class="flex flex-col items-center gap-4">
+          <div class="h-10 w-10 animate-spin rounded-full border-4 border-[rgba(179,224,193,0.12)] border-t-caro-accent" />
+          <p class="text-sm font-medium tracking-widest text-[#b8f0cb] uppercase">Đang tải...</p>
+        </div>
+      </div>
+    </Teleport>
   </main>
 </template>
