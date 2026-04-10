@@ -13,12 +13,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'ready'): void
   (e: 'start'): void
+  (e: 'restart'): void
 }>()
 
-const panelClass = 'rounded-[24px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] p-5 backdrop-blur-[18px]'
-const infoCardClass = 'grid rounded-xl bg-black/20 p-2.5 text-center'
-const infoLabelClass = 'text-[0.7rem] uppercase opacity-60'
-const playerPillBaseClass = 'rounded-full bg-white/5 px-3 py-1.5 text-[0.85rem]'
+const panelClass = 'rounded-[24px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] p-4 sm:p-5 backdrop-blur-[18px]'
+const infoCardClass = 'grid rounded-xl bg-black/20 p-2 sm:p-2.5 text-center'
+const infoLabelClass = 'text-[0.65rem] sm:text-[0.7rem] uppercase opacity-60'
+const playerPillBaseClass = 'rounded-full bg-white/5 px-3 py-1.5 text-[0.8rem] sm:text-[0.85rem]'
 const primaryButtonClass = 'w-full rounded-xl bg-[#4aa46f] px-5 py-2.5 font-semibold text-white transition duration-200 hover:-translate-y-px hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50'
 const ghostButtonClass = 'w-full rounded-xl border border-[rgba(179,224,193,0.12)] bg-transparent px-5 py-2.5 font-semibold text-white transition duration-200 hover:-translate-y-px hover:opacity-90'
 
@@ -29,7 +30,7 @@ const timerClass = computed(() => (
 
 <template>
   <div :class="[panelClass, 'grid gap-4']">
-    <div class="mb-1 grid grid-cols-3 gap-2.5">
+    <div class="mb-1 grid grid-cols-3 gap-2 sm:gap-2.5">
       <article :class="infoCardClass">
         <span :class="infoLabelClass">Phòng</span>
         <strong>{{ snapshot?.code ?? '---' }}</strong>
@@ -74,23 +75,37 @@ const timerClass = computed(() => (
       </div>
     </header>
 
-    <div v-if="snapshot?.status === 'waiting'" class="mt-2 flex justify-center">
+    <div v-if="snapshot" class="mt-2 flex justify-center">
+      <!-- Guest UI -->
       <button
-        v-if="myRole === 'guest'"
+        v-if="myRole === 'guest' && snapshot.status === 'waiting'"
         :class="snapshot.players.find(p => p.role === 'guest')?.ready ? ghostButtonClass : primaryButtonClass"
         @click="emit('ready')"
       >
         {{ snapshot.players.find(p => p.role === 'guest')?.ready ? 'Hủy sẵn sàng' : 'Sẵn sàng' }}
       </button>
 
-      <button
-        v-if="myRole === 'host'"
-        :class="primaryButtonClass"
-        :disabled="!snapshot.players.find(p => p.role === 'guest')?.ready"
-        @click="emit('start')"
-      >
-        Bắt đầu ván đấu
-      </button>
+      <!-- Host UI -->
+      <div v-if="myRole === 'host'" class="w-full space-y-2">
+        <!-- If playing or finished: show New Match button -->
+        <button
+          v-if="snapshot.status !== 'waiting'"
+          :class="snapshot.status === 'finished' ? primaryButtonClass : ghostButtonClass"
+          @click="emit('restart')"
+        >
+          Bắt đầu ván mới
+        </button>
+
+        <!-- If waiting: show Start button -->
+        <button
+          v-else
+          :class="primaryButtonClass"
+          :disabled="!snapshot.players.find(p => p.role === 'guest')?.ready"
+          @click="emit('start')"
+        >
+          Bắt đầu ván đấu
+        </button>
+      </div>
     </div>
   </div>
 </template>

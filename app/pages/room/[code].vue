@@ -105,6 +105,12 @@ const statusCardClass = 'flex items-center gap-4 rounded-[18px] border border-[r
 
 const canRestart = computed(() => connectionState.value === 'connected' && myRole.value === 'host')
 
+const showRestartConfirm = ref(false)
+const confirmRestart = async () => {
+  showRestartConfirm.value = false
+  await restartMatch()
+}
+
 const showWinnerDialog = ref(false)
 const winnerInfo = computed(() => {
   if (!snapshot.value || snapshot.value.status !== 'finished') return null
@@ -152,35 +158,31 @@ watch(() => snapshot.value?.status, (status) => {
     </section>
 
     <!-- Main Game Grid -->
-    <section class="grid gap-6 xl:grid-cols-[350px_minmax(0,1fr)_320px] xl:items-start">
+    <section class="grid gap-4 sm:gap-6 xl:grid-cols-[350px_minmax(0,1fr)_320px] xl:items-start">
       <!-- Left Column: Score & Info -->
-      <aside class="order-2 grid gap-5 xl:order-none">
+      <aside class="order-1 xl:order-none grid gap-4 sm:gap-5">
         <CaroScoreboard v-if="snapshot" :snapshot="snapshot" :myRole="myRole" :mySeatLabel="mySeatLabel"
-          :scoreboard="scoreboard" :timeLeft="timeLeft" @ready="toggleReady" @start="startGame" />
+          :scoreboard="scoreboard" :timeLeft="timeLeft" @ready="toggleReady" @start="startGame" @restart="showRestartConfirm = true" />
 
-        <div v-if="canRestart || notice" :class="panelClass">
-          <div v-if="notice"
-            class="mb-3 rounded-[10px] border border-[rgba(200,165,87,0.2)] bg-[rgba(200,165,87,0.1)] p-2.5 text-[0.9rem] text-[#f5d79a]">
+        <div v-if="notice" :class="panelClass">
+          <div class="rounded-[10px] border border-[rgba(200,165,87,0.2)] bg-[rgba(200,165,87,0.1)] p-2.5 text-[0.85rem] sm:text-[0.9rem] text-[#f5d79a]">
             {{ notice }}
-          </div>
-          <div v-if="canRestart">
-            <button :class="ghostButtonClass" @click="restartMatch" class="w-full">Bắt đầu ván mới</button>
           </div>
         </div>
 
-        <div :class="panelClass">
+        <div :class="[panelClass, 'hidden sm:block']">
           <p :class="eyebrowClass">Luật chơi</p>
           <ul class="list-disc space-y-1.5 pl-[18px] text-[0.85rem] text-[rgba(231,243,235,0.7)]">
             <li>Host là X, Guest là O.</li>
             <li>Đủ 2 người ván đấu sẽ được bắt đầu sau khi cả 2 người chơi nhấn nút "Sẵn sàng".</li>
             <li>Ai có 5 quân liên tiếp trước sẽ thắng.</li>
-            <li>Mỗi lượt có 30 giây suy nghĩ.</li>
+            <li>Tổng thời gian mỗi ván: 3 phút. Hết giờ người đang lượt đi sẽ thua.</li>
           </ul>
         </div>
       </aside>
 
       <!-- Center: The Board -->
-      <div class="order-1 xl:order-none">
+      <div class="order-2 xl:order-none overflow-hidden">
         <CaroBoard :snapshot="snapshot" :canPlayCell="canPlayCell" :loadingCell="loadingCell" @play="playCell" />
 
         <div v-if="!snapshot && connectionState === 'connecting'"
@@ -211,8 +213,28 @@ watch(() => snapshot.value?.status, (status) => {
         <button :class="ghostButtonClass" @click="handleLeave">Rời phòng</button>
         <button v-if="canRestart"
           :class="['rounded-xl bg-caro-accent px-6 py-2.5 font-bold text-caro-bg-deep transition']"
-          @click="restartMatch">
+          @click="showRestartConfirm = true">
           Đấu tiếp
+        </button>
+      </template>
+    </BaseDialog>
+    <BaseDialog :show="showRestartConfirm" title="Xác nhận bắt đầu lại" @close="showRestartConfirm = false">
+      <div class="space-y-4 text-center py-4">
+        <div class="inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-white/5 mb-2">
+          <Icon name="mdi:refresh" class="text-5xl text-caro-accent" />
+        </div>
+        <h3 class="text-xl font-bold text-white">Bắt đầu ván mới?</h3>
+        <p class="text-[rgba(231,243,235,0.7)]">
+          Bạn có chắc chắn muốn bắt đầu lại ván đấu không? 
+          <span v-if="snapshot?.status === 'playing'" class="block mt-2 text-amber-400">Tiến trình hiện tại sẽ bị hủy bỏ.</span>
+        </p>
+      </div>
+
+      <template #footer>
+        <button :class="ghostButtonClass" @click="showRestartConfirm = false">Hủy</button>
+        <button :class="['rounded-xl bg-caro-accent px-6 py-2.5 font-bold text-caro-bg-deep transition']"
+          @click="confirmRestart">
+          Xác nhận
         </button>
       </template>
     </BaseDialog>

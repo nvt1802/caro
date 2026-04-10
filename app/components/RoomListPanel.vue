@@ -3,6 +3,7 @@ import type { RoomListItem } from '#shared/caro'
 
 defineProps<{
   rooms: RoomListItem[]
+  isRefreshing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -10,8 +11,8 @@ const emit = defineEmits<{
   (e: 'refresh'): void
 }>()
 
-const panelClass = 'rounded-[24px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] p-5 backdrop-blur-[18px]'
-const ghostButtonClass = 'rounded-xl border border-[rgba(179,224,193,0.12)] bg-transparent px-4 py-2 font-semibold text-white transition duration-200 hover:-translate-y-px hover:opacity-90'
+const panelClass = 'rounded-[24px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] p-4 sm:p-5 backdrop-blur-[18px]'
+const ghostButtonClass = 'rounded-xl border border-[rgba(179,224,193,0.12)] bg-transparent px-4 py-2 font-semibold text-white transition duration-200 hover:-translate-y-px hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed'
 const primaryButtonClass = 'rounded-xl bg-[#4aa46f] px-4 py-2 font-semibold text-white transition duration-200 hover:-translate-y-px hover:opacity-90'
 
 function formatStatus(status: RoomListItem['status']) {
@@ -21,7 +22,7 @@ function formatStatus(status: RoomListItem['status']) {
     case 'finished':
       return 'Đã xong'
     default:
-      return 'Chờ người chơi'
+      return 'Chờ'
   }
 }
 
@@ -31,13 +32,23 @@ function formatUpdatedAt(updatedAt: string) {
 </script>
 
 <template>
-  <div :class="[panelClass, 'flex h-[400px] flex-col xl:h-[600px]']">
+  <div :class="[panelClass, 'flex h-[350px] sm:h-[400px] flex-col xl:h-[600px]']">
     <div class="mb-4 flex items-center justify-between gap-3">
       <div>
         <p class="mb-2 text-xs uppercase tracking-[0.24em] text-caro-accent">Danh sách phòng</p>
         <p class="text-sm text-[rgba(231,243,235,0.68)]">Hiển thị tất cả phòng hiện có. Chỉ phòng chưa đủ người mới hiện nút join.</p>
       </div>
-      <button :class="ghostButtonClass" @click="emit('refresh')">Làm mới</button>
+      <button 
+        :class="[ghostButtonClass, 'flex items-center gap-2']" 
+        :disabled="isRefreshing"
+        @click="emit('refresh')"
+      >
+        <div
+          v-if="isRefreshing"
+          class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/10 border-t-caro-accent"
+        />
+        Làm mới
+      </button>
     </div>
 
     <div v-if="rooms.length === 0" class="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[rgba(179,224,193,0.18)] px-6 text-center text-sm text-[rgba(231,243,235,0.6)]">

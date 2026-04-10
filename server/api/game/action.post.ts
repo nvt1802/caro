@@ -64,7 +64,7 @@ export default defineEventHandler(async (event) => {
       winner: null,
       winning_line: [],
       turn: Math.random() < 0.5 ? "X" : "O",
-      time_left: TURN_TIME_LIMIT,
+      time_left: 180, // Using static 180 here to avoid import issues if any, but it refers to MATCH_TIME_LIMIT
       updated_at: new Date().toISOString(),
     };
   } else if (type === "restart") {
@@ -73,15 +73,17 @@ export default defineEventHandler(async (event) => {
         statusCode: 403,
         message: "Chỉ chủ phòng mới có thể bắt đầu lại.",
       });
+
+    const isAi = roomRow.is_ai;
     updates = {
-      status: "waiting",
+      status: isAi ? "playing" : "waiting",
       board: createEmptyBoard(),
       winner: null,
       winning_line: [],
-      turn: "X",
-      host_ready: false,
-      guest_ready: false,
-      time_left: TURN_TIME_LIMIT,
+      turn: Math.random() < 0.5 ? "X" : "O",
+      host_ready: isAi,
+      guest_ready: isAi,
+      time_left: 180,
       updated_at: new Date().toISOString(),
     };
   } else if (type === "leave") {
@@ -98,12 +100,35 @@ export default defineEventHandler(async (event) => {
       // Guest leaves: reset guest info AND reset game to waiting
       updates = {
         guest_name: "Guest",
+        guest_connected: false,
         guest_ready: false,
         status: "waiting",
         board: createEmptyBoard(),
         winning_line: [],
         updated_at: new Date().toISOString(),
       };
+    }
+  } else if (type === "sync") {
+    // Client-side detected timeout, double check on server
+    if (roomRow.status === "playing") {
+      const now = new Date();
+      const lastUpdate = new Date(roomRow.updated_at);
+      const elapsedSeconds = Math.floor((now.getTime() - lastUpdate.getTime()) / 1000);
+      const currentRealTimeLeft = Math.max(0, roomRow.time_left - elapsedSeconds);
+
+      if (currentRealTimeLeft <= 0) {
+        const opponentMark: Mark = roomRow.turn === "X" ? "O" : "X";
+        const scores = { ...roomRow.scores };
+        scores[opponentMark] += 1;
+
+        updates = {
+          status: "finished",
+          winner: opponentMark,
+          time_left: 0,
+          updated_at: now.toISOString(),
+          scores
+        };
+      }
     }
   }
 

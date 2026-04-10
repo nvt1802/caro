@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **test-omx** (145 symbols, 247 relationships, 12 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **caro** (160 symbols, 261 relationships, 12 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -17,7 +17,7 @@ This project is indexed by GitNexus as **test-omx** (145 symbols, 247 relationsh
 
 1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
 2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/test-omx/process/{processName}` — trace the full execution flow step by step
+3. `READ gitnexus://repo/caro/process/{processName}` — trace the full execution flow step by step
 4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
 
 ## When Refactoring
@@ -56,10 +56,10 @@ This project is indexed by GitNexus as **test-omx** (145 symbols, 247 relationsh
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/test-omx/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/test-omx/clusters` | All functional areas |
-| `gitnexus://repo/test-omx/processes` | All execution flows |
-| `gitnexus://repo/test-omx/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/caro/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/caro/clusters` | All functional areas |
+| `gitnexus://repo/caro/processes` | All execution flows |
+| `gitnexus://repo/caro/process/{name}` | Step-by-step execution trace |
 
 ## Self-Check Before Finishing
 

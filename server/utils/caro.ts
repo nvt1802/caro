@@ -99,6 +99,26 @@ export function processMove(
     return `Chưa tới lượt ${mark}.`;
   }
 
+  const now = new Date();
+  const lastUpdate = new Date(row.updated_at);
+  const elapsedSeconds = Math.floor((now.getTime() - lastUpdate.getTime()) / 1000);
+  const newTimeLeft = Math.max(0, row.time_left - elapsedSeconds);
+
+  if (newTimeLeft <= 0) {
+    // Current player timed out! Opponent wins.
+    const opponentMark: Mark = mark === "X" ? "O" : "X";
+    const scores = { ...row.scores };
+    scores[opponentMark] += 1;
+    
+    return {
+      status: "finished",
+      winner: opponentMark,
+      time_left: 0,
+      updated_at: now.toISOString(),
+      scores
+    };
+  }
+
   if (!Number.isInteger(r) || !Number.isInteger(c)) {
     return "Tọa độ nước đi không hợp lệ.";
   }
@@ -138,20 +158,29 @@ export function processMove(
     winning_line: winningLine,
     scores,
     turn,
-    updated_at: new Date().toISOString(),
+    time_left: newTimeLeft,
+    updated_at: now.toISOString(),
   };
 }
 
 /**
  * Heuristic scoring for AI to find the best move.
  */
-function evaluateMove(board: Cell[][], r: number, c: number, mark: Mark): number {
+function evaluateMove(
+  board: Cell[][],
+  r: number,
+  c: number,
+  mark: Mark,
+): number {
   const opponentMark: Mark = mark === "X" ? "O" : "X";
   let totalScore = 0;
 
   const directions = [
-    [1, 0], [0, 1], [1, 1], [1, -1]
-  ];
+    [1, 0],
+    [0, 1],
+    [1, 1],
+    [1, -1],
+  ] as const;
 
   for (const [dr, dc] of directions) {
     const aiPatterns = checkLinePatterns(board, r, c, dr, dc, mark);
@@ -160,23 +189,35 @@ function evaluateMove(board: Cell[][], r: number, c: number, mark: Mark): number
     // Defensive is slightly higher priority than offensive unless AI can win
     if (aiPatterns.count >= 5) totalScore += 100000;
     else if (opPatterns.count >= 5) totalScore += 50000;
-    else if (aiPatterns.count === 4 && aiPatterns.openSides > 0) totalScore += 10000;
-    else if (opPatterns.count === 4 && opPatterns.openSides > 0) totalScore += 8000;
-    else if (aiPatterns.count === 3 && aiPatterns.openSides === 2) totalScore += 3000;
-    else if (opPatterns.count === 3 && opPatterns.openSides === 2) totalScore += 2000;
+    else if (aiPatterns.count === 4 && aiPatterns.openSides > 0)
+      totalScore += 10000;
+    else if (opPatterns.count === 4 && opPatterns.openSides > 0)
+      totalScore += 8000;
+    else if (aiPatterns.count === 3 && aiPatterns.openSides === 2)
+      totalScore += 3000;
+    else if (opPatterns.count === 3 && opPatterns.openSides === 2)
+      totalScore += 2000;
     else totalScore += aiPatterns.count * 10 + opPatterns.count * 5;
   }
 
   return totalScore;
 }
 
-function checkLinePatterns(board: Cell[][], r: number, c: number, dr: number, dc: number, mark: Mark) {
+function checkLinePatterns(
+  board: Cell[][],
+  r: number,
+  c: number,
+  dr: number,
+  dc: number,
+  mark: Mark,
+) {
   let count = 1;
   let openSides = 0;
 
   // Check forward
   for (let i = 1; i < 5; i++) {
-    const nr = r + dr * i, nc = c + dc * i;
+    const nr = r + dr * i,
+      nc = c + dc * i;
     if (nr < 0 || nr >= board.length || nc < 0 || nc >= board[0]!.length) break;
     if (board[nr]![nc] === mark) count++;
     else {
@@ -186,7 +227,8 @@ function checkLinePatterns(board: Cell[][], r: number, c: number, dr: number, dc
   }
   // Check backward
   for (let i = 1; i < 5; i++) {
-    const nr = r - dr * i, nc = c - dc * i;
+    const nr = r - dr * i,
+      nc = c - dc * i;
     if (nr < 0 || nr >= board.length || nc < 0 || nc >= board[0]!.length) break;
     if (board[nr]![nc] === mark) count++;
     else {
@@ -198,21 +240,31 @@ function checkLinePatterns(board: Cell[][], r: number, c: number, dr: number, dc
   return { count, openSides };
 }
 
-export function calculateAIMove(board: Cell[][], aiMark: Mark): { r: number, c: number } | null {
+export function calculateAIMove(
+  board: Cell[][],
+  aiMark: Mark,
+): { r: number; c: number } | null {
   let bestScore = -1;
-  let bestMoves: { r: number, c: number }[] = [];
+  let bestMoves: { r: number; c: number }[] = [];
 
   // Scopes the search area to cells near existing marks to improve performance
-  const searchArea: { r: number, c: number }[] = [];
+  const searchArea: { r: number; c: number }[] = [];
   for (let r = 0; r < board.length; r++) {
     for (let c = 0; c < board[r]!.length; c++) {
       if (board[r]![c]) continue;
-      
+
       let hasNeighbor = false;
       for (let i = -2; i <= 2; i++) {
         for (let j = -2; j <= 2; j++) {
-          const nr = r + i, nc = c + j;
-          if (nr >= 0 && nr < board.length && nc >= 0 && nc < (board[nr]?.length || 0) && board[nr]![nc]) {
+          const nr = r + i,
+            nc = c + j;
+          if (
+            nr >= 0 &&
+            nr < board.length &&
+            nc >= 0 &&
+            nc < (board[nr]?.length || 0) &&
+            board[nr]![nc]
+          ) {
             hasNeighbor = true;
             break;
           }
@@ -220,7 +272,8 @@ export function calculateAIMove(board: Cell[][], aiMark: Mark): { r: number, c: 
         if (hasNeighbor) break;
       }
 
-      if (hasNeighbor || (r === 10 && c === 10)) { // Center if empty
+      if (hasNeighbor || (r === 7 && c === 7)) {
+        // Center if empty
         searchArea.push({ r, c });
       }
     }

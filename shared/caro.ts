@@ -1,7 +1,8 @@
 export const BOARD_SIZE = 15
 export const WIN_LENGTH = 5
 export const ROOM_CODE_LENGTH = 6
-export const TURN_TIME_LIMIT = 30 // seconds
+export const TURN_TIME_LIMIT = 180 // seconds (used as initial time pool)
+export const MATCH_TIME_LIMIT = 180 // seconds
 
 export type Mark = 'X' | 'O'
 export type Cell = Mark | null
@@ -141,7 +142,7 @@ export function createInitialSnapshot(code: string): RoomSnapshot {
     ],
     scores: { X: 0, O: 0 },
     recentChat: [],
-    timeLeft: TURN_TIME_LIMIT,
+    timeLeft: MATCH_TIME_LIMIT,
     updatedAt: new Date().toISOString(),
     name: 'Phòng Caro'
   }

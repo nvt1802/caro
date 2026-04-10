@@ -43,6 +43,10 @@ export function useCaroGame() {
     "caro-roomPasswordInput",
     () => "",
   );
+  const isRefreshingRoomList = useState<boolean>(
+    "caro-isRefreshingRoomList",
+    () => false,
+  );
 
   const mySeatLabel = computed(() => {
     if (!myRole.value) return "Đang xem...";
@@ -55,7 +59,31 @@ export function useCaroGame() {
     return null;
   });
   const scoreboard = computed(() => snapshot.value?.scores ?? { X: 0, O: 0 });
-  const timeLeft = computed(() => snapshot.value?.timeLeft ?? 30);
+  
+  // Real-time timer logic
+  const clientTime = ref(Date.now());
+  if (import.meta.client) {
+    setInterval(() => {
+      clientTime.value = Date.now();
+    }, 1000);
+  }
+
+  const timeLeft = computed(() => {
+    if (!snapshot.value || snapshot.value.status !== "playing") {
+      return snapshot.value?.timeLeft ?? 180;
+    }
+    const lastUpdate = new Date(snapshot.value.updatedAt).getTime();
+    const elapsed = Math.floor((clientTime.value - lastUpdate) / 1000);
+    const remaining = Math.max(0, snapshot.value.timeLeft - elapsed);
+
+    // If we detect timeout locally and we are the host, notify the server
+    // (Choosing host to notify to avoid duplicate requests, but server double-checks)
+    if (remaining === 0 && myRole.value === "host") {
+      sendRoomAction("sync", {}, false);
+    }
+
+    return remaining;
+  });
   const chatHistory = computed(() => snapshot.value?.recentChat ?? []);
 
   const canPlayCell = (row: number, col: number) => {
@@ -399,6 +427,7 @@ export function useCaroGame() {
   };
 
   const fetchRoomList = async () => {
+    isRefreshingRoomList.value = true;
     try {
       // Add timestamp to bypass browser cache
       const response = await fetch(`/api/rooms?t=${Date.now()}`, {
@@ -410,6 +439,8 @@ export function useCaroGame() {
       }
     } catch (err) {
       roomList.value = [];
+    } finally {
+      isRefreshingRoomList.value = false;
     }
   };
 
@@ -561,5 +592,6 @@ export function useCaroGame() {
     verifyAccess,
     connect,
     connectLobby,
+    isRefreshingRoomList,
   };
 }

@@ -22,7 +22,7 @@ function cellClasses(row: number, col: number, val: Mark | null) {
   const isLoading = isCellLoading(row, col)
 
   return [
-    'relative flex h-10 w-10 items-center justify-center rounded-md border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.03)] transition duration-150 disabled:cursor-not-allowed disabled:opacity-100',
+    'relative flex h-6 w-6 sm:h-8 sm:w-8 md:h-10 md:w-10 items-center justify-center rounded-md border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.03)] transition duration-150 disabled:cursor-not-allowed disabled:opacity-100',
     isPlayable && !isLoading ? 'cursor-pointer hover:border-[rgba(158,216,176,0.3)] hover:bg-[rgba(158,216,176,0.1)]' : '',
     isLast ? 'border-2 border-caro-accent' : '',
     isWinning ? 'bg-[rgba(74,164,111,0.3)]' : '',
@@ -34,7 +34,7 @@ function cellClasses(row: number, col: number, val: Mark | null) {
 <template>
   <div
     v-if="snapshot"
-    class="flex justify-center rounded-[20px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.4)] p-2.5"
+    class="flex justify-start sm:justify-center overflow-x-auto overflow-y-hidden rounded-[20px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.4)] p-2.5"
   >
     <div class="flex w-fit flex-col gap-1">
       <div v-for="(line, rIdx) in snapshot.board" :key="rIdx" class="flex gap-1">
