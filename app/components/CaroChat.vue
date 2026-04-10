@@ -5,6 +5,7 @@ import type { ChatMessage, Role } from '#shared/caro'
 const props = defineProps<{
   history: ChatMessage[]
   myRole: Role | null
+  isChatting?: boolean
 }>()
 
 const chatScrollRef = useTemplateRef<HTMLElement>('chatScroll')
@@ -60,7 +61,10 @@ const ghostButtonClass = 'rounded-xl border border-[rgba(179,224,193,0.12)] bg-t
     </div>
     <form class="mt-2.5 flex gap-2" @submit.prevent="emit('send')">
       <input v-model="modelValue" :class="inputClass" placeholder="Nhập tin nhắn..." maxlength="100" />
-      <button type="submit" :class="ghostButtonClass">Gửi</button>
+      <button type="submit" :class="ghostButtonClass" :disabled="isChatting">
+        <div v-if="isChatting" class="h-4 w-4 animate-spin rounded-full border-2 border-[rgba(255,255,255,0.1)] border-t-caro-accent" />
+        <span v-else>Gửi</span>
+      </button>
     </form>
   </div>
 </template>

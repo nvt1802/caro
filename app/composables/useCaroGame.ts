@@ -7,26 +7,37 @@ import {
   normalizePlayerName,
   normalizeRoomCode,
 } from "#shared/caro";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+
+// Define channels outside the composable to maintain singleton behavior across pages
+let roomChannel: RealtimeChannel | null = null;
+let lobbyChannel: RealtimeChannel | null = null;
+
+// Global counter for toasts to ensure unique IDs
+let toastIdCounter = 0;
 
 export function useCaroGame() {
   const supabase = useSupabaseClient();
-  const userName = ref("");
-  const roomCodeInput = ref("");
-  const snapshot = ref<RoomSnapshot | null>(null);
-  const roomList = ref<RoomListItem[]>([]);
-  const notice = ref("");
-  const connectionState = ref<
+  const userName = useState<string>("caro-userName", () => "");
+  const roomCodeInput = useState<string>("caro-roomCodeInput", () => "");
+  const snapshot = useState<RoomSnapshot | null>("caro-snapshot", () => null);
+  const roomList = useState<RoomListItem[]>("caro-roomList", () => []);
+  const notice = useState<string>("caro-notice", () => "");
+  const connectionState = useState<
     "idle" | "connecting" | "connected" | "closed" | "error"
-  >("idle");
-  const myRole = ref<"host" | "guest" | null>(null);
+  >("caro-connectionState", () => "idle");
+  const myRole = useState<"host" | "guest" | null>("caro-myRole", () => null);
   const chatInput = ref("");
-  const toasts = ref<{ id: number; text: string }[]>([]);
-  const isLoading = ref(false);
-  const loadingCell = ref<{ row: number; col: number } | null>(null);
-  let toastIdCounter = 0;
-
-  let roomChannel: any = null;
-  let lobbyChannel: any = null;
+  const toasts = useState<{ id: number; text: string }[]>(
+    "caro-toasts",
+    () => [],
+  );
+  const isLoading = useState<boolean>("caro-isLoading", () => false);
+  const loadingCell = useState<{ row: number; col: number } | null>(
+    "caro-loadingCell",
+    () => null,
+  );
+  const isChatting = useState<boolean>("caro-isChatting", () => false);
 
   const mySeatLabel = computed(() => {
     if (!myRole.value) return "Đang xem...";
@@ -81,11 +92,17 @@ export function useCaroGame() {
     }
   }
 
-  const unsubscribeAll = () => {
+  const unsubscribeAll = async () => {
+    const promises = [];
     if (roomChannel) {
-      supabase.removeChannel(roomChannel);
+      promises.push(supabase.removeChannel(roomChannel));
       roomChannel = null;
     }
+    if (lobbyChannel) {
+      promises.push(supabase.removeChannel(lobbyChannel));
+      lobbyChannel = null;
+    }
+    await Promise.all(promises);
   };
 
   const fetchRoomSnapshot = async (code: string) => {
@@ -96,7 +113,7 @@ export function useCaroGame() {
       .single();
 
     if (error || !data) {
-      if (myRole.value === 'guest') {
+      if (myRole.value === "guest") {
         showToast("Chủ phòng đã rời đi, phòng bị giải tán.");
         leaveRoom();
       } else {
@@ -116,13 +133,23 @@ export function useCaroGame() {
       winningLine: row.winning_line,
       lastMove: null,
       players: [
-        { role: 'host', name: row.host_name, connected: row.host_connected, ready: row.host_ready },
-        { role: 'guest', name: row.guest_name, connected: row.guest_connected, ready: row.guest_ready }
+        {
+          role: "host",
+          name: row.host_name,
+          connected: row.host_connected,
+          ready: row.host_ready,
+        },
+        {
+          role: "guest",
+          name: row.guest_name,
+          connected: row.guest_connected,
+          ready: row.guest_ready,
+        },
       ],
       scores: row.scores,
       recentChat: row.recent_chat,
       timeLeft: row.time_left,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
     };
 
     const oldTurn = snapshot.value?.turn;
@@ -132,8 +159,12 @@ export function useCaroGame() {
     return newSnapshot;
   };
 
-  const connect = async (role: "host" | "guest", roomCode: string, name: string) => {
-    unsubscribeAll();
+  const connect = async (
+    role: "host" | "guest",
+    roomCode: string,
+    name: string,
+  ) => {
+    await unsubscribeAll();
     myRole.value = role;
     userName.value = name;
     roomCodeInput.value = roomCode;
@@ -147,44 +178,58 @@ export function useCaroGame() {
 
     connectionState.value = "connected";
     notice.value = "";
-    
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get("room") !== roomCode) {
-      window.history.replaceState({}, "", `?room=${roomCode}`);
-    }
 
     // Subscribe to DB changes for this room
-    roomChannel = supabase.channel(`room:${roomCode}`)
+    roomChannel = supabase
+      .channel(`room:${roomCode}`)
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'caro_rooms', filter: `code=eq.${roomCode}` },
-        (payload) => {
-          if (payload.eventType === 'DELETE') {
-            if (myRole.value === 'guest') {
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "caro_rooms",
+          filter: `code=eq.${roomCode}`,
+        },
+        async (payload) => {
+          console.log("Room Change Detected:", payload.eventType, payload);
+          if (payload.eventType === "DELETE") {
+            if (myRole.value === "guest") {
+              console.log("Room deleted by Host, leaving...");
               showToast("Chủ phòng đã rời đi, phòng bị giải tán.");
-              leaveRoom();
+              await leaveRoom();
             }
           } else {
-            const oldGuest = snapshot.value?.players.find(p => p.role === 'guest')?.name;
+            const oldGuest = snapshot.value?.players.find(
+              (p) => p.role === "guest",
+            )?.name;
             fetchRoomSnapshot(roomCode).then((newSnap) => {
-              if (newSnap && myRole.value === 'host') {
-                const newGuest = newSnap.players.find(p => p.role === 'guest')?.name;
-                if (oldGuest !== 'Guest' && newGuest === 'Guest') {
+              if (newSnap && myRole.value === "host") {
+                const newGuest = newSnap.players.find(
+                  (p) => p.role === "guest",
+                )?.name;
+                if (oldGuest !== "Guest" && newGuest === "Guest") {
                   showToast("Người chơi kia đã rời đi, đang chờ người mới...");
                 }
               }
             });
           }
-        }
+        },
       )
       .subscribe();
   };
 
-  const sendRoomAction = async (type: string, data: any = {}) => {
+  const sendRoomAction = async (
+    type: string,
+    data: any = {},
+    showGlobalLoading = true,
+  ) => {
     if (!snapshot.value || !myRole.value) return;
     
-    try {
+    if (showGlobalLoading) {
       isLoading.value = true;
+    }
+
+    try {
       const response = await fetch("/api/game/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -192,10 +237,10 @@ export function useCaroGame() {
           code: snapshot.value.code,
           role: myRole.value,
           type,
-          ...data
-        })
+          ...data,
+        }),
       });
-      
+
       const result = await response.json();
       if (!response.ok) {
         showToast(result.message || "Lỗi khi thực hiện hành động.");
@@ -203,7 +248,9 @@ export function useCaroGame() {
     } catch (err) {
       showToast("Lỗi mạng khi kết nối máy chủ.");
     } finally {
-      isLoading.value = false;
+      if (showGlobalLoading) {
+        isLoading.value = false;
+      }
     }
   };
 
@@ -213,17 +260,18 @@ export function useCaroGame() {
       return;
     }
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    
+
     try {
       isLoading.value = true;
       const resp = await fetch("/api/game/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, name: userName.value })
+        body: JSON.stringify({ code, name: userName.value }),
       });
       const result = await resp.json();
       if (resp.ok) {
-        connect("host", code, userName.value);
+        roomCodeInput.value = code;
+        await connect("host", code, userName.value);
       } else {
         notice.value = result.message;
       }
@@ -254,11 +302,11 @@ export function useCaroGame() {
       const resp = await fetch("/api/game/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: targetRoomCode, name: userName.value })
+        body: JSON.stringify({ code: targetRoomCode, name: userName.value }),
       });
       const result = await resp.json();
       if (resp.ok) {
-        connect("guest", targetRoomCode, userName.value);
+        await connect("guest", targetRoomCode, userName.value);
       } else {
         notice.value = result.message;
       }
@@ -273,7 +321,7 @@ export function useCaroGame() {
     if (!canPlayCell(row, col)) return;
     loadingCell.value = { row, col };
     try {
-      await sendRoomAction("move", { row, col });
+      await sendRoomAction("move", { row, col }, false);
     } finally {
       loadingCell.value = null;
     }
@@ -283,16 +331,23 @@ export function useCaroGame() {
   const startGame = () => sendRoomAction("start");
   const restartMatch = () => sendRoomAction("restart");
 
-  const sendChatMessage = () => {
+  const sendChatMessage = async () => {
     if (!chatInput.value.trim()) return;
-    sendRoomAction("chat", { text: chatInput.value });
-    chatInput.value = "";
+    isChatting.value = true;
+    try {
+      await sendRoomAction("chat", { text: chatInput.value }, false);
+      chatInput.value = "";
+    } finally {
+      isChatting.value = false;
+    }
   };
 
   const fetchRoomList = async () => {
-    if (snapshot.value) return;
     try {
-      const response = await fetch("/api/rooms");
+      // Add timestamp to bypass browser cache
+      const response = await fetch(`/api/rooms?t=${Date.now()}`, {
+        headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+      });
       if (response.ok) {
         const payload = await response.json();
         roomList.value = payload.rooms ?? [];
@@ -302,45 +357,61 @@ export function useCaroGame() {
     }
   };
 
-  const connectLobby = () => {
-    if (snapshot.value || lobbyChannel) return;
+  let isConnectingLobby = false;
+  const connectLobby = async () => {
+    // Avoid double-connecting or connecting while in a room
+    if (snapshot.value || isConnectingLobby) return;
+    
+    // If already have a channel, make sure it's clean (some cases might leave it dangling)
+    if (lobbyChannel) {
+      await supabase.removeChannel(lobbyChannel);
+      lobbyChannel = null;
+    }
 
-    fetchRoomList();
-    lobbyChannel = supabase.channel('lobby')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'caro_rooms' },
-        () => {
-          fetchRoomList();
-        }
-      )
-      .subscribe();
+    isConnectingLobby = true;
+    try {
+      // Initial fetch to get latest state
+      await fetchRoomList();
+
+      lobbyChannel = supabase.channel("lobby-room-updates");
+      
+      lobbyChannel
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "caro_rooms" },
+          () => fetchRoomList()
+        )
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "caro_rooms" },
+          () => fetchRoomList()
+        )
+        .on(
+          "postgres_changes",
+          { event: "DELETE", schema: "public", table: "caro_rooms" },
+          () => fetchRoomList()
+        )
+        .subscribe((status) => {
+          console.log("Lobby Subscription Status:", status);
+          if (status === "SUBSCRIBED") {
+            fetchRoomList();
+          }
+        });
+    } finally {
+      isConnectingLobby = false;
+    }
   };
 
+  // Restored shared behavior handling for all players
   onMounted(() => {
-    userName.value = window.localStorage.getItem("caro-user-name") ?? "";
-    const savedRoom = window.sessionStorage.getItem("caro-room-code") ?? "";
-    const savedRole = window.sessionStorage.getItem("caro-room-role") as Role | null;
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const roomFromUrl = normalizeRoomCode(urlParams.get("room") ?? "");
-
-    if (roomFromUrl) {
-      roomCodeInput.value = roomFromUrl;
-      if (roomFromUrl === savedRoom && savedRole && userName.value) {
-        connect(savedRole, roomFromUrl, userName.value);
-      }
+    if (!userName.value) {
+      userName.value = window.localStorage.getItem("caro-user-name") ?? "";
     }
 
-    if (!snapshot.value) {
-      connectLobby();
-    }
-
-    // Handle tab closing
-    window.addEventListener('beforeunload', () => {
+    // Global listener for Tab closing
+    const handleUnload = () => {
       if (snapshot.value && myRole.value) {
-        // Use keepalive fetch if possible, or just send it and hope for the best.
-        // On Vercel, it might not finish, but it's the best we can do without Presence webhooks.
+        // Keeping it simple with keepalive fetch
         fetch("/api/game/action", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -348,11 +419,12 @@ export function useCaroGame() {
           body: JSON.stringify({
             code: snapshot.value.code,
             role: myRole.value,
-            type: 'leave'
-          })
+            type: "leave",
+          }),
         });
       }
-    });
+    };
+    window.addEventListener("beforeunload", handleUnload);
   });
 
   watch(userName, (val) => window.localStorage.setItem("caro-user-name", val));
@@ -363,24 +435,36 @@ export function useCaroGame() {
   watch(myRole, (val) => {
     if (val) window.sessionStorage.setItem("caro-room-role", val);
   });
-  watch(snapshot, (val) => {
-    if (!val) {
-      connectLobby();
-    } else if (lobbyChannel) {
-      supabase.removeChannel(lobbyChannel);
-      lobbyChannel = null;
-    }
-  });
 
   const leaveRoom = async () => {
-    if (snapshot.value && myRole.value) {
-      await sendRoomAction("leave");
-    }
-    unsubscribeAll();
+    // Avoid re-entry
+    if (!snapshot.value || !myRole.value) return;
+
+    // Capture current info into local constants before clearing global state
+    const code = snapshot.value.code;
+    const role = myRole.value;
+
+    // 1. Clear state IMMEDIATELY so Lobby connection isn't blocked
     snapshot.value = null;
     connectionState.value = "idle";
     myRole.value = null;
-    window.history.replaceState({}, "", window.location.pathname);
+
+    // 2. Perform async cleanups in the background (or await them)
+    try {
+      // Use direct fetch to bypass the sendRoomAction guard which checks for snapshot
+      fetch("/api/game/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, role, type: "leave" }),
+      }).catch((e) => console.error("Leave room API error:", e));
+
+      await unsubscribeAll();
+    } catch (err) {
+      console.error("Cleanup error during leave:", err);
+    }
+
+    // 3. Navigate away
+    navigateTo("/lobby");
   };
 
   return {
@@ -410,5 +494,8 @@ export function useCaroGame() {
     canPlayCell,
     isLoading,
     loadingCell,
+    isChatting,
+    connect,
+    connectLobby,
   };
 }

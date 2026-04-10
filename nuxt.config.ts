@@ -20,6 +20,9 @@ export default defineNuxtConfig({
     '@nuxt/scripts',
     '@nuxtjs/supabase'
   ],
+  supabase: {
+    redirect: false
+  },
   vite: {
     plugins: [tailwindcss()]
   }
