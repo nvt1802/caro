@@ -2,6 +2,8 @@
 import { onMounted, watch } from 'vue'
 import { useCaroGame } from '~/composables/useCaroGame'
 import RoomListPanel from '~/components/RoomListPanel.vue'
+import BaseDialog from '~/components/BaseDialog.vue'
+import type { RoomListItem } from '#shared/caro'
 
 const {
   userName,
@@ -13,8 +15,14 @@ const {
   fetchRoomList,
   connectLobby,
   connectionState,
-  isLoading
+  isLoading,
+  roomNameInput,
+  roomPasswordInput
 } = useCaroGame()
+
+const showPasswordDialog = ref(false)
+const passwordToJoin = ref('')
+const joiningRoom = ref<RoomListItem | null>(null)
 
 // Redirect to home if name is not set
 onMounted(() => {
@@ -32,12 +40,36 @@ const handleCreate = async () => {
   }
 }
 
-const handleJoin = async (code?: string) => {
-  if (code) roomCodeInput.value = code
-  await joinRoom(roomCodeInput.value)
-  if (connectionState.value === 'connected' || snapshot?.value?.code === roomCodeInput.value) {
-    navigateTo(`/room/${roomCodeInput.value}`)
+const handleJoin = async (target?: RoomListItem | string) => {
+  if (typeof target === 'object' && target !== null) {
+    if (target.isPrivate) {
+      joiningRoom.value = target
+      passwordToJoin.value = ''
+      showPasswordDialog.value = true
+      return
+    }
+    await processJoin(target.code)
+  } else {
+    const code = (target as string) || roomCodeInput.value
+    if (!code) return
+    await processJoin(code)
   }
+}
+
+const processJoin = async (code: string, password?: string) => {
+  await joinRoom(code, password)
+  if (connectionState.value === 'connected' || snapshot?.value?.code === code) {
+    navigateTo(`/room/${code}`)
+  }
+}
+
+const confirmPasswordJoin = async () => {
+  if (!joiningRoom.value) return
+  const code = joiningRoom.value.code
+  const pass = passwordToJoin.value
+  
+  showPasswordDialog.value = false
+  await processJoin(code, pass)
 }
 
 const panelClass = 'rounded-[24px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.72)] p-6 backdrop-blur-[18px]'
@@ -75,8 +107,19 @@ const ghostButtonClass = 'rounded-xl border border-[rgba(179,224,193,0.12)] bg-t
             <Icon name="mdi:plus-circle" class="text-caro-accent" />
             Tạo phòng mới
           </h3>
-          <p class="text-sm text-[rgba(231,243,235,0.6)] mb-6">Bạn sẽ trở thành Host (X) và người khác có thể tham gia
-            vào phòng của bạn.</p>
+          <p class="text-sm text-[rgba(231,243,235,0.6)] mb-4">Bạn sẽ trở thành Host (X) và người khác có thể tham gia vào phòng của bạn.</p>
+          
+          <div class="space-y-3 mb-6">
+            <div>
+              <label class="text-[0.7rem] uppercase tracking-wider text-[rgba(231,243,235,0.5)] mb-1 block">Tên phòng (tùy chọn)</label>
+              <input v-model="roomNameInput" :class="inputClass" placeholder="VD: Solo thắng thua vui vẻ..." />
+            </div>
+            <div>
+              <label class="text-[0.7rem] uppercase tracking-wider text-[rgba(231,243,235,0.5)] mb-1 block">Mật khẩu (để trống nếu muốn phòng công khai)</label>
+              <input v-model="roomPasswordInput" type="password" :class="inputClass" placeholder="Nhập mật khẩu..." />
+            </div>
+          </div>
+
           <button :class="[primaryButtonClass, 'w-full flex items-center justify-center gap-2']" :disabled="isLoading"
             @click="handleCreate">
             <span>Bắt đầu phòng mới</span>
@@ -102,5 +145,37 @@ const ghostButtonClass = 'rounded-xl border border-[rgba(179,224,193,0.12)] bg-t
       <!-- Room List Main -->
       <RoomListPanel :rooms="roomList" @join="handleJoin" @refresh="fetchRoomList" />
     </div>
+
+    <!-- Password Dialog -->
+    <BaseDialog 
+      :show="showPasswordDialog" 
+      title="Yêu cầu mật khẩu" 
+      @close="showPasswordDialog = false"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-[rgba(231,243,235,0.6)]">
+          Phòng <strong class="text-caro-accent">{{ joiningRoom?.name }}</strong> đang được bảo vệ. Vui lòng nhập mật khẩu để tham gia.
+        </p>
+        <input 
+          v-model="passwordToJoin" 
+          type="password" 
+          :class="inputClass" 
+          placeholder="Nhập mật khẩu tại đây..." 
+          autofocus
+          @keyup.enter="confirmPasswordJoin"
+        />
+      </div>
+      
+      <template #footer>
+        <button :class="ghostButtonClass" @click="showPasswordDialog = false">Hủy</button>
+        <button 
+          :class="primaryButtonClass" 
+          :disabled="!passwordToJoin || isLoading"
+          @click="confirmPasswordJoin"
+        >
+          Xác nhận
+        </button>
+      </template>
+    </BaseDialog>
   </div>
 </template>

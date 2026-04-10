@@ -30,8 +30,11 @@ const {
   isLoading,
   loadingCell,
   isChatting,
+  verifyAccess,
   connect
 } = useCaroGame()
+
+const isVerified = ref(false)
 
 // Auto-navigate back to lobby if room is lost
 watch([snapshot, connectionState], ([newSnap, newConn]) => {
@@ -67,15 +70,29 @@ const connectionTone = computed(() => {
 onMounted(async () => {
   // If no username, go back to setup
   if (!userName.value) {
+    window.localStorage.setItem('caro-pending-room', roomCode)
     navigateTo('/')
     return
   }
 
-  // If we arrived here without being "connected" yet (e.g. direct link)
-  if (connectionState.value !== 'connected' || snapshot.value?.code !== roomCode) {
-    // Try to restore role from session storage if possible
-    const savedRole = window.sessionStorage.getItem('caro-room-role') as any
-    await connect(savedRole || 'guest', roomCode, userName.value)
+  // Check access first
+  const result = await verifyAccess(roomCode)
+  
+  if (result.success) {
+    isVerified.value = true
+    // If we arrived here without being "connected" yet (e.g. direct link)
+    if (connectionState.value !== 'connected' || snapshot.value?.code !== roomCode) {
+      // Role is now auto-detected in useCaroGame
+      await connect(roomCode, userName.value)
+    }
+  } else if (result.isPrivate) {
+    // New Requirement: If private, kick directly to lobby
+    notice.value = "Phòng kín chỉ có thể truy cập từ Sảnh chờ."
+    setTimeout(() => navigateTo('/lobby'), 2000)
+  } else {
+    // Room not found or other fatal error
+    notice.value = result.message || 'Không thể truy cập phòng này.'
+    setTimeout(() => navigateTo('/lobby'), 2000)
   }
 })
 
@@ -88,7 +105,7 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
 </script>
 
 <template>
-  <div class="space-y-6 pb-12">
+  <div v-if="isVerified" class="space-y-6 pb-12">
     <!-- Game Header / Stats -->
     <section class="flex flex-wrap items-center justify-between gap-4">
       <div class="flex flex-wrap gap-3">
@@ -168,5 +185,12 @@ const canRestart = computed(() => connectionState.value === 'connected' && myRol
         @send="sendChatMessage"
       />
     </section>
+  </div>
+
+  <!-- Loading State before verification -->
+  <div v-else class="flex flex-col items-center justify-center min-h-[60vh]">
+    <div class="h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-caro-accent mb-4" />
+    <p v-if="notice" class="text-red-400 mt-2">{{ notice }}</p>
+    <p v-else class="text-white">Đang kiểm tra quyền truy cập...</p>
   </div>
 </template>

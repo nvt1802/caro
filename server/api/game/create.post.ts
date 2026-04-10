@@ -1,29 +1,35 @@
-import { serverSupabaseClient } from '#supabase/server'
-import { createNewRoomRow } from '../../utils/caro'
+import { serverSupabaseClient } from "#supabase/server";
+import { createNewRoomRow } from "../../utils/caro";
 
 export default defineEventHandler(async (event) => {
-  const body = await readBody(event)
-  const { code, name } = body
+  const body = await readBody(event);
+  const { code, name, roomName, password } = body;
 
   if (!code || !name) {
-    throw createError({ statusCode: 400, message: 'Thiếu mã phòng hoặc tên người chơi.' })
+    throw createError({
+      statusCode: 400,
+      message: "Thiếu mã phòng hoặc tên người chơi.",
+    });
   }
 
-  const client = await serverSupabaseClient(event)
-  const newRoom = createNewRoomRow(code, name)
+  const client = await serverSupabaseClient(event);
+  const newRoom = createNewRoomRow(code, name, roomName, password);
 
-  const { data, error } = await client
-    .from('caro_rooms')
+  const { data, error } = await (client.from("caro_rooms") as any)
     .insert([newRoom])
     .select()
-    .single()
+    .single();
 
   if (error) {
-    if (error.code === '23505') { // Unique violation
-        throw createError({ statusCode: 400, message: 'Mã phòng này đã tồn tại.' })
+    if (error.code === "23505") {
+      // Unique violation
+      throw createError({
+        statusCode: 400,
+        message: "Mã phòng này đã tồn tại.",
+      });
     }
-    throw createError({ statusCode: 500, message: error.message })
+    throw createError({ statusCode: 500, message: error.message });
   }
 
-  return { success: true, room: data }
-})
+  return { success: true, room: data };
+});

@@ -41,6 +41,7 @@ export interface RoomSnapshot {
   recentChat: ChatMessage[]
   timeLeft: number
   updatedAt: string
+  name: string
 }
 
 export interface RoomListItem {
@@ -51,6 +52,8 @@ export interface RoomListItem {
   status: GameStatus
   updatedAt: string
   canJoin: boolean
+  name: string
+  isPrivate: boolean
 }
 
 export interface ClientMoveMessage {
@@ -137,7 +140,8 @@ export function createInitialSnapshot(code: string): RoomSnapshot {
     scores: { X: 0, O: 0 },
     recentChat: [],
     timeLeft: TURN_TIME_LIMIT,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    name: 'Phòng Caro'
   }
 }
 

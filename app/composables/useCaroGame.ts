@@ -38,6 +38,11 @@ export function useCaroGame() {
     () => null,
   );
   const isChatting = useState<boolean>("caro-isChatting", () => false);
+  const roomNameInput = useState<string>("caro-roomNameInput", () => "");
+  const roomPasswordInput = useState<string>(
+    "caro-roomPasswordInput",
+    () => "",
+  );
 
   const mySeatLabel = computed(() => {
     if (!myRole.value) return "Đang xem...";
@@ -106,13 +111,14 @@ export function useCaroGame() {
   };
 
   const fetchRoomSnapshot = async (code: string) => {
-    const { data, error } = await supabase
-      .from("caro_rooms")
+    const normalizedCode = (code || "").trim().toUpperCase();
+    const { data, error } = await (supabase.from("caro_rooms") as any)
       .select("*")
-      .eq("code", code)
+      .eq("code", normalizedCode)
       .single();
 
     if (error || !data) {
+      if (error) console.error("Supabase Fetch Error:", error);
       if (myRole.value === "guest") {
         showToast("Chủ phòng đã rời đi, phòng bị giải tán.");
         leaveRoom();
@@ -150,11 +156,17 @@ export function useCaroGame() {
       recentChat: row.recent_chat,
       timeLeft: row.time_left,
       updatedAt: row.updated_at,
+      name: row.name,
     };
 
     const oldTurn = snapshot.value?.turn;
     const oldStatus = snapshot.value?.status;
     snapshot.value = newSnapshot;
+
+    // Sync role based on userName
+    const me = newSnapshot.players.find((p) => p.name === userName.value);
+    myRole.value = me ? (me.role as "host" | "guest") : null;
+
     notifyTurn(newSnapshot.turn, newSnapshot.status, oldStatus, oldTurn);
     return newSnapshot;
   };
@@ -165,7 +177,7 @@ export function useCaroGame() {
     name: string,
   ) => {
     await unsubscribeAll();
-    myRole.value = role;
+    // role is no longer set manually, it will be synced in fetchRoomSnapshot
     userName.value = name;
     roomCodeInput.value = roomCode;
     connectionState.value = "connecting";
@@ -224,7 +236,7 @@ export function useCaroGame() {
     showGlobalLoading = true,
   ) => {
     if (!snapshot.value || !myRole.value) return;
-    
+
     if (showGlobalLoading) {
       isLoading.value = true;
     }
@@ -266,7 +278,12 @@ export function useCaroGame() {
       const resp = await fetch("/api/game/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, name: userName.value }),
+        body: JSON.stringify({
+          code,
+          name: userName.value,
+          roomName: roomNameInput.value,
+          password: roomPasswordInput.value,
+        }),
       });
       const result = await resp.json();
       if (resp.ok) {
@@ -282,7 +299,23 @@ export function useCaroGame() {
     }
   };
 
-  const joinRoom = async (roomCodeOverride?: string) => {
+  const verifyAccess = async (roomCode: string, password?: string) => {
+    try {
+      const resp = await fetch("/api/game/verify-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: roomCode, password, userName: userName.value }),
+      });
+      return await resp.json();
+    } catch (e) {
+      return { success: false, message: "Lỗi kết nối máy chủ." };
+    }
+  };
+
+  const joinRoom = async (
+    roomCodeOverride?: string,
+    passwordOverride?: string,
+  ) => {
     if (!userName.value.trim()) {
       notice.value = "Vui lòng nhập tên của bạn.";
       return;
@@ -302,7 +335,11 @@ export function useCaroGame() {
       const resp = await fetch("/api/game/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: targetRoomCode, name: userName.value }),
+        body: JSON.stringify({
+          code: targetRoomCode,
+          name: userName.value,
+          password: passwordOverride ?? roomPasswordInput.value,
+        }),
       });
       const result = await resp.json();
       if (resp.ok) {
@@ -361,7 +398,7 @@ export function useCaroGame() {
   const connectLobby = async () => {
     // Avoid double-connecting or connecting while in a room
     if (snapshot.value || isConnectingLobby) return;
-    
+
     // If already have a channel, make sure it's clean (some cases might leave it dangling)
     if (lobbyChannel) {
       await supabase.removeChannel(lobbyChannel);
@@ -374,22 +411,22 @@ export function useCaroGame() {
       await fetchRoomList();
 
       lobbyChannel = supabase.channel("lobby-room-updates");
-      
+
       lobbyChannel
         .on(
           "postgres_changes",
           { event: "INSERT", schema: "public", table: "caro_rooms" },
-          () => fetchRoomList()
+          () => fetchRoomList(),
         )
         .on(
           "postgres_changes",
           { event: "UPDATE", schema: "public", table: "caro_rooms" },
-          () => fetchRoomList()
+          () => fetchRoomList(),
         )
         .on(
           "postgres_changes",
           { event: "DELETE", schema: "public", table: "caro_rooms" },
-          () => fetchRoomList()
+          () => fetchRoomList(),
         )
         .subscribe((status) => {
           console.log("Lobby Subscription Status:", status);
@@ -407,6 +444,11 @@ export function useCaroGame() {
     if (!userName.value) {
       userName.value = window.localStorage.getItem("caro-user-name") ?? "";
     }
+
+    // Save username whenever it changes
+    watch(userName, (newVal) => {
+      window.localStorage.setItem("caro-user-name", newVal);
+    });
 
     // Global listener for Tab closing
     const handleUnload = () => {
@@ -495,6 +537,9 @@ export function useCaroGame() {
     isLoading,
     loadingCell,
     isChatting,
+    roomNameInput,
+    roomPasswordInput,
+    verifyAccess,
     connect,
     connectLobby,
   };

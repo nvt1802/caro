@@ -11,7 +11,15 @@ const onStart = () => {
   if (!userName.value.trim()) {
     return
   }
-  navigateTo('/lobby')
+
+  // Check if there was a room we were trying to join
+  const pendingRoom = window.localStorage.getItem('caro-pending-room')
+  if (pendingRoom) {
+    window.localStorage.removeItem('caro-pending-room')
+    navigateTo(`/room/${pendingRoom}`)
+  } else {
+    navigateTo('/lobby')
+  }
 }
 </script>
 

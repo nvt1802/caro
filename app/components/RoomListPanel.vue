@@ -6,7 +6,7 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'join', roomCode: string): void
+  (e: 'join', room: RoomListItem): void
   (e: 'refresh'): void
 }>()
 
@@ -51,10 +51,17 @@ function formatUpdatedAt(updatedAt: string) {
         class="rounded-2xl border border-[rgba(179,224,193,0.12)] bg-[rgba(255,255,255,0.04)] p-4"
       >
         <div class="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <div class="text-lg font-bold tracking-[0.08em]">{{ room.code }}</div>
-            <div class="mt-1 text-sm text-[rgba(231,243,235,0.65)]">
-              Cập nhật lúc {{ formatUpdatedAt(room.updatedAt) }}
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <div class="text-lg font-bold truncate text-[rgba(231,243,235,0.95)]">{{ room.name }}</div>
+              <div v-if="room.isPrivate" class="flex-shrink-0 text-amber-400" title="Phòng có mật khẩu">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              </div>
+            </div>
+            <div class="mt-1 flex items-center gap-2 text-xs text-[rgba(231,243,235,0.5)]">
+              <span class="rounded bg-white/5 px-1.5 py-0.5 font-mono uppercase tracking-wider">{{ room.code }}</span>
+              <span>•</span>
+              <span>{{ formatUpdatedAt(room.updatedAt) }}</span>
             </div>
           </div>
           <span class="rounded-full bg-white/5 px-3 py-1 text-xs text-[rgba(231,243,235,0.85)]">
@@ -81,7 +88,7 @@ function formatUpdatedAt(updatedAt: string) {
           <button
             v-if="room.canJoin"
             :class="primaryButtonClass"
-            @click="emit('join', room.code)"
+            @click="emit('join', room)"
           >
             Join
           </button>
