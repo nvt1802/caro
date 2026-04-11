@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RoomListItem } from '#shared/caro'
+import type { RoomListItem } from '~~/shared/game'
 
 defineProps<{
   rooms: RoomListItem[]
@@ -64,6 +64,15 @@ function formatUpdatedAt(updatedAt: string) {
         <div class="mb-3 flex items-start justify-between gap-3">
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
+              <div v-if="room.gameType === 'chess'" class="flex-shrink-0 text-caro-accent" title="Cờ Vua">
+                <Icon name="mdi:chess-king" size="20" />
+              </div>
+              <div v-else-if="room.gameType === 'caro'" class="flex-shrink-0 text-caro-accent" title="Caro">
+                <Icon name="mdi:grid" size="20" />
+              </div>
+              <div v-else-if="room.gameType === 'xiangqi'" class="flex-shrink-0 text-caro-accent" title="Cờ Tướng">
+                <Icon name="mdi:chess-rook" size="20" />
+              </div>
               <div class="text-lg font-bold truncate text-[rgba(231,243,235,0.95)]">{{ room.name }}</div>
               <div v-if="room.isAi" class="flex-shrink-0 text-sky-400" title="Chơi với máy">
                 <Icon name="mdi:robot" size="18" />

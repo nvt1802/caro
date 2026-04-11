@@ -1,11 +1,13 @@
 export const BOARD_SIZE = 15
 export const WIN_LENGTH = 5
 export const ROOM_CODE_LENGTH = 6
-export const TURN_TIME_LIMIT = 180 // seconds (used as initial time pool)
+export const TURN_TIME_LIMIT = 180 // seconds (initial pool)
 export const MATCH_TIME_LIMIT = 180 // seconds
 
+export type GameType = 'caro' | 'chess' | 'xiangqi'
 export type Mark = 'X' | 'O'
-export type Cell = Mark | null
+export type ChessColor = 'w' | 'b'
+export type Cell = Mark | string | null
 export type GameStatus = 'waiting' | 'playing' | 'finished'
 export type Role = 'host' | 'guest'
 
@@ -31,12 +33,12 @@ export interface MoveState {
 
 export interface RoomSnapshot {
   code: string
-  board: Cell[][]
+  board: Cell[][] | string
   turn: Mark
   winner: Mark | 'draw' | null
   status: GameStatus
   winningLine: Array<[number, number]>
-  lastMove: MoveState | null
+  lastMove: MoveState | string | null
   players: SnapshotPlayer[]
   scores: Record<Mark, number>
   recentChat: ChatMessage[]
@@ -44,6 +46,7 @@ export interface RoomSnapshot {
   updatedAt: string
   name: string
   isAi?: boolean
+  gameType: GameType
 }
 
 export interface RoomListItem {
@@ -57,6 +60,7 @@ export interface RoomListItem {
   name: string
   isPrivate: boolean
   isAi?: boolean
+  gameType: GameType
 }
 
 export interface ClientMoveMessage {
@@ -144,7 +148,52 @@ export function createInitialSnapshot(code: string): RoomSnapshot {
     recentChat: [],
     timeLeft: MATCH_TIME_LIMIT,
     updatedAt: new Date().toISOString(),
-    name: 'Phòng Caro'
+    name: 'Phòng Caro',
+    gameType: 'caro'
+  }
+}
+
+export function createChessSnapshot(code: string): RoomSnapshot {
+  return {
+    code,
+    board: [], // We'll use FEN string conceptually or a special board format
+    turn: 'X', // Host is X (White)
+    winner: null,
+    status: 'waiting',
+    winningLine: [],
+    lastMove: null,
+    players: [
+      { role: 'host', name: 'Host', connected: false, ready: false },
+      { role: 'guest', name: 'Guest', connected: false, ready: false }
+    ],
+    scores: { X: 0, O: 0 },
+    recentChat: [],
+    timeLeft: MATCH_TIME_LIMIT,
+    updatedAt: new Date().toISOString(),
+    name: 'Phòng Cờ Vua',
+    gameType: 'chess'
+  }
+}
+
+export function createXiangqiSnapshot(code: string): RoomSnapshot {
+  return {
+    code,
+    board: [], // We'll use FEN string conceptually or a special board format
+    turn: 'X', // Host is X (Red)
+    winner: null,
+    status: 'waiting',
+    winningLine: [],
+    lastMove: null,
+    players: [
+      { role: 'host', name: 'Host', connected: false, ready: false },
+      { role: 'guest', name: 'Guest', connected: false, ready: false }
+    ],
+    scores: { X: 0, O: 0 },
+    recentChat: [],
+    timeLeft: MATCH_TIME_LIMIT,
+    updatedAt: new Date().toISOString(),
+    name: 'Phòng Cờ Tướng',
+    gameType: 'xiangqi'
   }
 }
 

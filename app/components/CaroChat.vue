@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, useTemplateRef, watch } from 'vue'
-import type { ChatMessage, Role } from '#shared/caro'
+import type { ChatMessage, Role } from '~~/shared/game'
 
 const props = defineProps<{
   history: ChatMessage[]

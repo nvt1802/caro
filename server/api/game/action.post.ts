@@ -1,15 +1,20 @@
 import { serverSupabaseClient } from "#supabase/server";
 import {
   processMove,
+  processChessMove,
+  processXiangqiMove,
   processChat,
   type RoomRow,
   calculateAIMove,
-} from "../../utils/caro";
-import { createEmptyBoard, TURN_TIME_LIMIT } from "#shared/caro";
+  createInitialChessBoard,
+} from "../../utils/game";
+import { calculateChessAIMove } from "../../utils/chess-ai";
+import { calculateXiangqiAIMove } from "../../utils/xiangqi-ai";
+import { createEmptyBoard, type Mark } from "~~/shared/game";
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
-  const { code, role, type, row, col, text } = body;
+  const { code, role, type, row, col, text, move: chessMove } = body;
 
   if (!code || !role) {
     throw createError({
@@ -22,7 +27,7 @@ export default defineEventHandler(async (event) => {
 
   // Fetch current state
   const { data: room, error: fetchError } = await client
-    .from("caro_rooms")
+    .from("rooms")
     .select("*")
     .eq("code", code)
     .single();
@@ -35,11 +40,25 @@ export default defineEventHandler(async (event) => {
   let updates: Partial<RoomRow> = {};
 
   if (type === "move") {
-    const result = processMove(roomRow, role, row, col);
-    if (typeof result === "string") {
-      throw createError({ statusCode: 400, message: result });
+    if (roomRow.game_type === "chess") {
+      const result = processChessMove(roomRow, role, chessMove);
+      if (typeof result === "string") {
+        throw createError({ statusCode: 400, message: result });
+      }
+      updates = result;
+    } else if (roomRow.game_type === "xiangqi") {
+      const result = processXiangqiMove(roomRow, role, chessMove);
+      if (typeof result === "string") {
+        throw createError({ statusCode: 400, message: result });
+      }
+      updates = result;
+    } else {
+      const result = processMove(roomRow, role, row, col);
+      if (typeof result === "string") {
+        throw createError({ statusCode: 400, message: result });
+      }
+      updates = result;
     }
-    updates = result;
   } else if (type === "chat") {
     updates = processChat(roomRow, role, text);
   } else if (type === "ready") {
@@ -60,11 +79,11 @@ export default defineEventHandler(async (event) => {
 
     updates = {
       status: "playing",
-      board: createEmptyBoard(),
+      board: roomRow.game_type === "chess" ? createInitialChessBoard() as any : createEmptyBoard(),
       winner: null,
       winning_line: [],
-      turn: Math.random() < 0.5 ? "X" : "O",
-      time_left: 180, // Using static 180 here to avoid import issues if any, but it refers to MATCH_TIME_LIMIT
+      turn: roomRow.game_type === "chess" ? "X" : (Math.random() < 0.5 ? "X" : "O"), // X = White always starts in Chess
+      time_left: 180,
       updated_at: new Date().toISOString(),
     };
   } else if (type === "restart") {
@@ -77,10 +96,10 @@ export default defineEventHandler(async (event) => {
     const isAi = roomRow.is_ai;
     updates = {
       status: isAi ? "playing" : "waiting",
-      board: createEmptyBoard(),
+      board: roomRow.game_type === "chess" ? createInitialChessBoard() as any : createEmptyBoard(),
       winner: null,
       winning_line: [],
-      turn: Math.random() < 0.5 ? "X" : "O",
+      turn: roomRow.game_type === "chess" ? "X" : (Math.random() < 0.5 ? "X" : "O"),
       host_ready: isAi,
       guest_ready: isAi,
       time_left: 180,
@@ -89,7 +108,7 @@ export default defineEventHandler(async (event) => {
   } else if (type === "leave") {
     if (role === "host") {
       const { error: deleteError } = await client
-        .from("caro_rooms")
+        .from("rooms")
         .delete()
         .eq("code", code);
 
@@ -97,19 +116,17 @@ export default defineEventHandler(async (event) => {
         throw createError({ statusCode: 500, message: deleteError.message });
       return { success: true, deleted: true };
     } else {
-      // Guest leaves: reset guest info AND reset game to waiting
       updates = {
         guest_name: "Guest",
         guest_connected: false,
         guest_ready: false,
         status: "waiting",
-        board: createEmptyBoard(),
+        board: roomRow.game_type === "chess" ? createInitialChessBoard() as any : createEmptyBoard(),
         winning_line: [],
         updated_at: new Date().toISOString(),
       };
     }
   } else if (type === "sync") {
-    // Client-side detected timeout, double check on server
     if (roomRow.status === "playing") {
       const now = new Date();
       const lastUpdate = new Date(roomRow.updated_at);
@@ -132,32 +149,73 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // --- AI Turn Logic (Refactored to trigger at the end of any action) ---
-  // We check the "effective" next state: roomRow merged with updates
+  // --- AI Turn Logic ---
   const nextStatus = updates.status || roomRow.status;
   const nextTurn = updates.turn || roomRow.turn;
   const isAiRoom = roomRow.is_ai;
 
   if (isAiRoom && nextStatus === "playing" && nextTurn === "O") {
-    // If it's now O's turn (AI), let's calculate and apply its move
-    const boardBeforeAi = updates.board || roomRow.board;
-    const aiMove = calculateAIMove(boardBeforeAi, "O");
-
-    if (aiMove) {
-      // Process move on top of the already prepared updates
-      const interimRow: RoomRow = { ...roomRow, ...updates };
-      const aiResult = processMove(interimRow, "guest", aiMove.r, aiMove.c);
-
-      if (typeof aiResult !== "string") {
-        // Merge AI results into our final updates object
-        updates = { ...updates, ...aiResult };
+    const interimRow: RoomRow = { ...roomRow, ...updates };
+    
+    if (roomRow.game_type === "chess") {
+      const fen = typeof interimRow.board === "string" ? interimRow.board : (createInitialChessBoard() as string);
+      const aiMove = calculateChessAIMove(fen);
+      if (aiMove) {
+        const aiResult = processChessMove(interimRow, "guest", aiMove);
+        if (typeof aiResult !== "string") {
+          updates = { ...updates, ...aiResult };
+        }
+      }
+    } else if (roomRow.game_type === "xiangqi") {
+      // Create initial xiangqi fen if empty
+      // By default it is already populated via empty string check inside engine, or we could pass undefined
+      const fen = typeof interimRow.board === "string" && interimRow.board.length > 5 ? interimRow.board : undefined;
+      const aiMove = calculateXiangqiAIMove(fen, 3, "b"); // Guest is 'b' (Black) in Xiangqi
+      if (aiMove) {
+        // AI returns { from: 'r,c', to: 'r,c' }, so we construct moveStr
+        const moveStr = `${aiMove.from}-${aiMove.to}`;
+        const aiResult = processXiangqiMove(interimRow, "guest", moveStr);
+        if (typeof aiResult !== "string") {
+          updates = { ...updates, ...aiResult };
+        }
+      }
+    } else {
+      const boardBeforeAi = updates.board || roomRow.board;
+      const aiMove = calculateAIMove(boardBeforeAi as any, "O");
+      if (aiMove) {
+        const aiResult = processMove(interimRow, "guest", aiMove.r, aiMove.c);
+        if (typeof aiResult !== "string") {
+          updates = { ...updates, ...aiResult };
+        }
       }
     }
   }
-  // --- End AI Logic ---
+
+  // --- Statistics Update Logic ---
+  const finalStatus = updates.status || roomRow.status;
+  const winner = updates.winner || roomRow.winner;
+  
+  if (roomRow.status === "playing" && finalStatus === "finished" && !roomRow.is_ai) {
+    const gameType = roomRow.game_type;
+    const hostId = roomRow.host_id;
+    const guestId = roomRow.guest_id;
+
+    if (winner === "draw") {
+      if (hostId) await client.rpc("increment_user_stat", { p_user_id: hostId, p_game_type: gameType, p_result: "draw" });
+      if (guestId) await client.rpc("increment_user_stat", { p_user_id: guestId, p_game_type: gameType, p_result: "draw" });
+    } else if (winner === "X") {
+      // Host ('X') wins
+      if (hostId) await client.rpc("increment_user_stat", { p_user_id: hostId, p_game_type: gameType, p_result: "win" });
+      if (guestId) await client.rpc("increment_user_stat", { p_user_id: guestId, p_game_type: gameType, p_result: "loss" });
+    } else if (winner === "O") {
+      // Guest ('O') wins
+      if (hostId) await client.rpc("increment_user_stat", { p_user_id: hostId, p_game_type: gameType, p_result: "loss" });
+      if (guestId) await client.rpc("increment_user_stat", { p_user_id: guestId, p_game_type: gameType, p_result: "win" });
+    }
+  }
 
   // Save updates
-  const { error: updateError } = await (client.from("caro_rooms") as any)
+  const { error: updateError } = await (client.from("rooms") as any)
     .update(updates)
     .eq("code", code);
 

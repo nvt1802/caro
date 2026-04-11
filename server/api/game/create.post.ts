@@ -1,5 +1,5 @@
-import { serverSupabaseClient } from "#supabase/server";
-import { createNewRoomRow } from "../../utils/caro";
+import { serverSupabaseClient, serverSupabaseUser } from "#supabase/server";
+import { createNewRoomRow } from "../../utils/game";
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
@@ -13,9 +13,19 @@ export default defineEventHandler(async (event) => {
   }
 
   const client = await serverSupabaseClient(event);
-  const newRoom = createNewRoomRow(code, name, roomName, password, isAi);
+  let user = null;
+  try {
+    user = await serverSupabaseUser(event);
+  } catch (e) {
+    // Auth session missing is expected for guests
+  }
 
-  const { data, error } = await (client.from("caro_rooms") as any)
+  const newRoom = createNewRoomRow(code, name, roomName, password, isAi, body.gameType || 'caro');
+  if (user) {
+    newRoom.host_id = user.id;
+  }
+
+  const { data, error } = await (client.from("rooms") as any)
     .insert([newRoom])
     .select()
     .single();

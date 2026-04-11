@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RoomSnapshot, Mark } from '#shared/caro'
+import type { RoomSnapshot, Mark, Cell } from '~~/shared/game'
 
 const props = defineProps<{
   snapshot: RoomSnapshot | null
@@ -15,8 +15,9 @@ function isCellLoading(r: number, c: number) {
   return props.loadingCell?.row === r && props.loadingCell?.col === c
 }
 
-function cellClasses(row: number, col: number, val: Mark | null) {
-  const isLast = props.snapshot?.lastMove?.row === row && props.snapshot?.lastMove?.col === col
+function cellClasses(row: number, col: number, val: Cell) {
+  const lm = props.snapshot?.lastMove
+  const isLast = typeof lm === 'object' && lm !== null && 'row' in lm && lm.row === row && lm.col === col
   const isWinning = props.snapshot?.winningLine.some(([r, c]) => r === row && c === col)
   const isPlayable = props.canPlayCell(row, col)
   const isLoading = isCellLoading(row, col)
@@ -37,7 +38,7 @@ function cellClasses(row: number, col: number, val: Mark | null) {
     class="flex justify-start sm:justify-center overflow-x-auto overflow-y-hidden rounded-[20px] border border-[rgba(179,224,193,0.12)] bg-[rgba(6,18,12,0.4)] p-2.5"
   >
     <div class="flex w-fit flex-col gap-1">
-      <div v-for="(line, rIdx) in snapshot.board" :key="rIdx" class="flex gap-1">
+      <div v-for="(line, rIdx) in (Array.isArray(snapshot.board) ? snapshot.board : [])" :key="rIdx" class="flex gap-1">
         <button
           v-for="(cell, cIdx) in line"
           :key="cIdx"

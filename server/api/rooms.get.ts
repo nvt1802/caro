@@ -1,11 +1,11 @@
 import { serverSupabaseClient } from '#supabase/server'
-import { rowToListItem, type RoomRow } from '../utils/caro'
+import { rowToListItem, type RoomRow } from '../utils/game'
 
 export default defineEventHandler(async (event) => {
   const client = await serverSupabaseClient(event)
   
   const { data: rooms, error } = await client
-    .from('caro_rooms')
+    .from('rooms')
     .select('*')
     .order('updated_at', { ascending: false })
 

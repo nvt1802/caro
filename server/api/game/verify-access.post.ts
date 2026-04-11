@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
 
   const client = await serverSupabaseClient(event);
   
-  const { data: room, error } = await (client.from("caro_rooms") as any)
+  const { data: room, error } = await (client.from("rooms") as any)
     .select("*")
     .eq("code", code)
     .single();

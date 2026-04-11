@@ -1,6 +1,6 @@
-import { serverSupabaseClient } from "#supabase/server";
-import { normalizePlayerName } from "#shared/caro";
-import { type RoomRow } from "../../utils/caro";
+import { serverSupabaseClient, serverSupabaseUser } from "#supabase/server";
+import { normalizePlayerName } from "~~/shared/game";
+import { type RoomRow } from "../../utils/game";
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
@@ -14,10 +14,16 @@ export default defineEventHandler(async (event) => {
   }
 
   const client = await serverSupabaseClient(event);
+  let user = null;
+  try {
+    user = await serverSupabaseUser(event);
+  } catch (e) {
+    // Auth session missing is expected for guests
+  }
 
   // Fetch room first
   const { data: room, error: fetchError } = await client
-    .from("caro_rooms")
+    .from("rooms")
     .select("*")
     .eq("code", code)
     .single();
@@ -26,29 +32,38 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: "Không tìm thấy phòng." });
   }
 
-  const roomData = room as RoomRow;
+  const roomRow = room as RoomRow;
 
   // Check password if set
-  if (roomData.password && roomData.password !== password) {
+  if (roomRow.password && roomRow.password !== password) {
     throw createError({
-      statusCode: 401,
-      message: "Mật khẩu phòng không chính xác.",
+      statusCode: 403,
+      message: "Mật khẩu không đúng.",
     });
   }
 
-  if (roomData.guest_name !== "Guest" && roomData.guest_name !== name) {
+  const connectedCount =
+    (roomRow.host_connected ? 1 : 0) + (roomRow.guest_connected ? 1 : 0);
+  if (connectedCount >= 2) {
     throw createError({
       statusCode: 400,
-      message: "Phòng đã đủ 2 người chơi.",
+      message: "Phòng đã đầy.",
     });
+  }
+
+  const updates: Partial<RoomRow> = {
+    guest_name: normalizePlayerName(name),
+    guest_connected: true,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (user) {
+    updates.guest_id = user.id;
   }
 
   // Update guest info
-  const { error: updateError } = await (client.from("caro_rooms") as any)
-    .update({
-      guest_name: normalizePlayerName(name),
-      updated_at: new Date().toISOString(),
-    })
+  const { error: updateError } = await (client.from("rooms") as any)
+    .update(updates)
     .eq("code", code);
 
   if (updateError) {

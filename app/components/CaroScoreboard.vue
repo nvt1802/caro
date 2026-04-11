@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { RoomSnapshot, Role } from '#shared/caro'
+import type { RoomSnapshot, Role, Mark } from '~~/shared/game'
 
 const props = defineProps<{
   snapshot: RoomSnapshot | null

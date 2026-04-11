@@ -1,29 +1,34 @@
-import tailwindcss from '@tailwindcss/vite'
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineNuxtConfig({
-  compatibilityDate: '2025-07-15',
+  compatibilityDate: "2025-07-15",
   devtools: { enabled: true },
-  css: ['~/assets/css/main.css'],
+  app: {
+    head: {
+      title: "MultiChess - Nền tảng đấu trí đa năng",
+    },
+  },
+  css: ["~/assets/css/main.css"],
   nitro: {
     experimental: {
-      websocket: true
-    }
+      websocket: true,
+    },
   },
   devServer: {
     port: 3000,
-    host: '*',
+    host: "*",
   },
   modules: [
-    '@nuxt/eslint',
-    '@nuxt/image',
-    '@nuxt/icon',
-    '@nuxt/scripts',
-    '@nuxtjs/supabase'
+    "@nuxt/eslint",
+    "@nuxt/image",
+    "@nuxt/icon",
+    "@nuxt/scripts",
+    "@nuxtjs/supabase",
   ],
   supabase: {
-    redirect: false
+    redirect: false,
   },
   vite: {
-    plugins: [tailwindcss()]
-  }
-})
+    plugins: [tailwindcss()],
+  },
+});

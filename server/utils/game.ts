@@ -2,19 +2,24 @@ import {
   type Cell,
   type GameStatus,
   type Mark,
-  type MoveState,
   type RoomListItem,
   type Role,
   type RoomSnapshot,
   cloneBoard,
   createEmptyBoard,
   createInitialSnapshot,
+  createChessSnapshot,
+  createXiangqiSnapshot,
   createWinningLine,
+  type GameType,
   normalizePlayerName,
   normalizeRoomCode,
   TURN_TIME_LIMIT,
   type ChatMessage,
-} from "#shared/caro";
+} from "~~/shared/game";
+import { CustomChess } from "~~/shared/chess-engine";
+import { XiangqiEngine } from "~~/shared/xiangqi-engine";
+import { calculateChessAIMove } from "./chess-ai";
 
 // No more local rooms Map or lobbyPeers Set.
 // State management is now handled by the server API routes calling Supabase.
@@ -34,7 +39,7 @@ export interface RoomRow {
   host_ready: boolean;
   guest_ready: boolean;
   status: GameStatus;
-  board: Cell[][];
+  board: Cell[][] | string;
   turn: Mark;
   winner: Mark | "draw" | null;
   winning_line: Array<[number, number]>;
@@ -43,6 +48,9 @@ export interface RoomRow {
   time_left: number;
   updated_at: string;
   is_ai: boolean;
+  game_type: GameType;
+  host_id?: string;
+  guest_id?: string;
 }
 
 /**
@@ -54,13 +62,24 @@ export function createNewRoomRow(
   roomName?: string,
   password?: string,
   isAi?: boolean,
+  gameType: GameType = "caro",
 ): Partial<RoomRow> {
   const normalizedCode = normalizeRoomCode(code);
-  const snapshot = createInitialSnapshot(normalizedCode);
+  
+  let snapshot: RoomSnapshot;
+  if (gameType === 'chess') {
+    snapshot = createChessSnapshot(normalizedCode);
+    snapshot.board = createInitialChessBoard() as any;
+  } else if (gameType === 'xiangqi') {
+    snapshot = createXiangqiSnapshot(normalizedCode);
+    // board for xiangqi will be handled via FEN, but we can set a dummy array if needed
+  } else {
+    snapshot = createInitialSnapshot(normalizedCode);
+  }
 
   return {
     code: normalizedCode,
-    name: roomName || "Phòng Caro",
+    name: roomName || (gameType === 'chess' ? "Phòng Cờ Vua" : (gameType === 'xiangqi' ? "Phòng Cờ Tướng" : "Phòng Caro")),
     password: password || undefined,
     host_name: normalizePlayerName(hostName),
     guest_name: isAi ? "Máy (BOT)" : "Guest",
@@ -77,6 +96,7 @@ export function createNewRoomRow(
     recent_chat: [],
     time_left: TURN_TIME_LIMIT,
     is_ai: isAi ?? false,
+    game_type: gameType,
   };
 }
 
@@ -101,7 +121,9 @@ export function processMove(
 
   const now = new Date();
   const lastUpdate = new Date(row.updated_at);
-  const elapsedSeconds = Math.floor((now.getTime() - lastUpdate.getTime()) / 1000);
+  const elapsedSeconds = Math.floor(
+    (now.getTime() - lastUpdate.getTime()) / 1000,
+  );
   const newTimeLeft = Math.max(0, row.time_left - elapsedSeconds);
 
   if (newTimeLeft <= 0) {
@@ -109,18 +131,22 @@ export function processMove(
     const opponentMark: Mark = mark === "X" ? "O" : "X";
     const scores = { ...row.scores };
     scores[opponentMark] += 1;
-    
+
     return {
       status: "finished",
       winner: opponentMark,
       time_left: 0,
       updated_at: now.toISOString(),
-      scores
+      scores,
     };
   }
 
   if (!Number.isInteger(r) || !Number.isInteger(c)) {
     return "Tọa độ nước đi không hợp lệ.";
+  }
+
+  if (typeof row.board === "string") {
+    return "Bàn cờ không hợp lệ.";
   }
 
   if (r < 0 || c < 0 || r >= row.board.length || c >= row.board[r]!.length) {
@@ -161,6 +187,173 @@ export function processMove(
     time_left: newTimeLeft,
     updated_at: now.toISOString(),
   };
+}
+
+/**
+ * Validates a chess move (UCI/SAN) and returns updated state.
+ */
+export function processChessMove(
+  row: RoomRow,
+  role: Role,
+  moveStr: string,
+): Partial<RoomRow> | string {
+  const mark: Mark = role === "host" ? "X" : "O"; // X = White, O = Black
+
+  if (row.status !== "playing" || row.winner) {
+    return "Ván đấu chưa bắt đầu hoặc đã kết thúc.";
+  }
+
+  if (row.turn !== mark) {
+    return `Chưa tới lượt ${mark}.`;
+  }
+
+  const now = new Date();
+  const lastUpdate = new Date(row.updated_at);
+  const elapsedSeconds = Math.floor(
+    (now.getTime() - lastUpdate.getTime()) / 1000,
+  );
+  const newTimeLeft = Math.max(0, row.time_left - elapsedSeconds);
+
+  if (newTimeLeft <= 0) {
+    const opponentMark: Mark = mark === "X" ? "O" : "X";
+    const scores = { ...row.scores };
+    scores[opponentMark] += 1;
+    return {
+      status: "finished",
+      winner: opponentMark,
+      time_left: 0,
+      updated_at: now.toISOString(),
+      scores,
+    };
+  }
+
+  const currentFen = typeof row.board === "string" ? row.board : undefined;
+  const game = new CustomChess(currentFen);
+
+  try {
+    const move = game.move(moveStr);
+    if (!move) return "Nước đi không hợp lệ.";
+
+    let status: GameStatus = "playing";
+    let winner: Mark | "draw" | null = null;
+    const scores = { ...row.scores };
+
+    if (game.isCheckmate()) {
+      winner = mark;
+      status = "finished";
+      scores[mark] += 1;
+    } else if (
+      game.isDraw() ||
+      game.isStalemate()
+    ) {
+      winner = "draw";
+      status = "finished";
+    }
+
+    return {
+      board: game.fen() as any,
+      status,
+      winner,
+      scores,
+      turn: mark === "X" ? "O" : "X",
+      time_left: newTimeLeft,
+      updated_at: now.toISOString(),
+    };
+  } catch (e) {
+    return "Nước đi không hợp lệ.";
+  }
+}
+
+export function createInitialChessBoard(): string {
+  const game = new CustomChess();
+  return game.fen();
+}
+
+export function processXiangqiMove(
+  row: RoomRow,
+  role: Role,
+  moveStr: string,
+): Partial<RoomRow> | string {
+  const mark: Mark = role === "host" ? "X" : "O"; // X = Red(w), O = Black(b)
+
+  if (row.status !== "playing" || row.winner) {
+    return "Ván đấu chưa bắt đầu hoặc đã kết thúc.";
+  }
+
+  if (row.turn !== mark) {
+    return `Chưa tới lượt ${mark}.`;
+  }
+
+  const now = new Date();
+  const lastUpdate = new Date(row.updated_at);
+  const elapsedSeconds = Math.floor(
+    (now.getTime() - lastUpdate.getTime()) / 1000,
+  );
+  const newTimeLeft = Math.max(0, row.time_left - elapsedSeconds);
+
+  if (newTimeLeft <= 0) {
+    const opponentMark: Mark = mark === "X" ? "O" : "X";
+    const scores = { ...row.scores };
+    scores[opponentMark] += 1;
+    return {
+      status: "finished",
+      winner: opponentMark,
+      time_left: 0,
+      updated_at: now.toISOString(),
+      scores,
+    };
+  }
+
+  const currentFen = typeof row.board === "string" ? row.board : undefined;
+  const game = new XiangqiEngine(currentFen);
+
+  try {
+    const parts = moveStr.split('-');
+    if (parts.length !== 2) return "Move string không hợp lệ.";
+    const [fromStr, toStr] = parts as [string, string];
+    const fromCoords = fromStr.split(',').map(Number);
+    const toCoords = toStr.split(',').map(Number);
+
+    if (fromCoords.length !== 2 || toCoords.length !== 2 || fromCoords.some(isNaN) || toCoords.some(isNaN)) {
+      return "Tọa độ nước đi không hợp lệ.";
+    }
+
+    const [fromRow, fromCol] = fromCoords as [number, number];
+    const [toRow, toCol] = toCoords as [number, number];
+
+    // ensure piece logic handles correctly
+    const fromPiece = game.board[fromRow]?.[fromCol];
+    if (!fromPiece || (fromPiece.color === 'w' ? 'X' : 'O') !== mark) {
+        return "Quân cờ không đúng màu.";
+    }
+
+    const success = game.move({row: fromRow, col: fromCol}, {row: toRow, col: toCol});
+    if (!success) {
+      return "Nước đi không hợp lệ.";
+    }
+
+    let status: GameStatus = "playing";
+    let winner: Mark | "draw" | null = null;
+    const scores = { ...row.scores };
+
+    if (game.isGameOver()) {
+      winner = mark; // The one who just moved won
+      status = "finished";
+      scores[mark] += 1;
+    }
+
+    return {
+      board: game.generateFEN() as any,
+      status,
+      winner,
+      scores,
+      turn: game.turn === 'w' ? "X" : "O",
+      time_left: newTimeLeft,
+      updated_at: now.toISOString(),
+    };
+  } catch (error) {
+    return "Lỗi xử lý nước đi.";
+  }
 }
 
 /**
@@ -355,6 +548,7 @@ export function rowToSnapshot(row: RoomRow): RoomSnapshot {
     updatedAt: row.updated_at,
     name: row.name,
     isAi: row.is_ai,
+    gameType: row.game_type,
   };
 }
 
@@ -375,5 +569,6 @@ export function rowToListItem(row: RoomRow): RoomListItem {
     name: row.name,
     isPrivate: !!row.password,
     isAi: row.is_ai,
+    gameType: row.game_type,
   };
 }

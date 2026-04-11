@@ -1,12 +1,11 @@
-import { ref, computed, watch, onMounted } from "vue";
 import {
   type RoomSnapshot,
-  type RoomListItem,
-  type Role,
   type Mark,
+  type RoomListItem,
   normalizePlayerName,
   normalizeRoomCode,
-} from "#shared/caro";
+  type GameType,
+} from "~~/shared/game";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // Define channels outside the composable to maintain singleton behavior across pages
@@ -18,6 +17,9 @@ let toastIdCounter = 0;
 
 export function useCaroGame() {
   const supabase = useSupabaseClient();
+  const user = useSupabaseUser();
+  const userProfile = useState<any>("caro-userProfile", () => null);
+
   const userName = useState<string>("caro-userName", () => "");
   const roomCodeInput = useState<string>("caro-roomCodeInput", () => "");
   const snapshot = useState<RoomSnapshot | null>("caro-snapshot", () => null);
@@ -47,10 +49,60 @@ export function useCaroGame() {
     "caro-isRefreshingRoomList",
     () => false,
   );
+  const userStats = useState<any[]>("caro-userStats", () => []);
+
+  // Sync profile when user changes
+  const fetchProfile = async () => {
+    if (!user.value) {
+      userProfile.value = null;
+      return;
+    }
+
+    const { data } = await (supabase.from("profiles") as any)
+      .select("*")
+      .eq("id", user.value.id)
+      .single();
+
+    if (data) {
+      userProfile.value = data;
+      // prioritize display_name, fallback to username
+      userName.value = data.display_name || data.username || user.value.email;
+    }
+  };
+
+  const fetchUserStats = async () => {
+    if (!user.value) {
+      userStats.value = [];
+      return;
+    }
+    try {
+      const response = await fetch("/api/stats/my-stats");
+      if (response.ok) {
+        const { stats } = await response.json();
+        userStats.value = stats;
+      }
+    } catch (e) {
+      console.error("Error fetching stats:", e);
+    }
+  };
+
+  if (import.meta.client) {
+    watch(user, () => {
+      fetchProfile();
+      fetchUserStats();
+    }, { immediate: true });
+  }
 
   const mySeatLabel = computed(() => {
-    if (!myRole.value) return "Đang xem...";
-    return myRole.value === "host" ? "Host / X" : "Guest / O";
+    if (!myRole.value || !snapshot.value) return "Đang xem...";
+    const type = snapshot.value.gameType;
+    if (type === 'chess') {
+      return myRole.value === "host" ? "Trắng (Host)" : "Đen (Guest)";
+    }
+    if (type === 'xiangqi') {
+      return myRole.value === "host" ? "Đỏ (Host)" : "Đen (Guest)";
+    }
+    return myRole.value === "host" ? "Host (X)" : "Guest (O)";
   });
 
   const myMark = computed(() => {
@@ -158,7 +210,7 @@ export function useCaroGame() {
 
   const fetchRoomSnapshot = async (code: string) => {
     const normalizedCode = (code || "").trim().toUpperCase();
-    const { data, error } = await (supabase.from("caro_rooms") as any)
+    const { data, error } = await (supabase.from("rooms") as any)
       .select("*")
       .eq("code", normalizedCode)
       .single();
@@ -203,6 +255,7 @@ export function useCaroGame() {
       timeLeft: row.time_left,
       updatedAt: row.updated_at,
       name: row.name,
+      gameType: row.game_type,
     };
 
     const oldTurn = snapshot.value?.turn;
@@ -245,7 +298,7 @@ export function useCaroGame() {
         {
           event: "*",
           schema: "public",
-          table: "caro_rooms",
+          table: "rooms",
           filter: `code=eq.${roomCode}`,
         },
         async (payload) => {
@@ -312,7 +365,7 @@ export function useCaroGame() {
     }
   };
 
-  const createRoom = async (isAi: boolean = false) => {
+  const createRoom = async (isAi: boolean = false, gameType: GameType = 'caro') => {
     if (!userName.value.trim()) {
       notice.value = "Vui lòng nhập tên của bạn.";
       return;
@@ -330,6 +383,7 @@ export function useCaroGame() {
           roomName: roomNameInput.value,
           password: roomPasswordInput.value,
           isAi,
+          gameType,
         }),
       });
       const result = await resp.json();
@@ -411,6 +465,18 @@ export function useCaroGame() {
     }
   };
 
+  const playChessMove = async (move: string) => {
+    if (!snapshot.value || snapshot.value.status !== 'playing') return;
+    if (snapshot.value.turn !== myMark.value) return;
+    
+    isLoading.value = true;
+    try {
+      await sendRoomAction("move", { move }, false);
+    } finally {
+      isLoading.value = false;
+    }
+  };
+
   const toggleReady = () => sendRoomAction("ready");
   const startGame = () => sendRoomAction("start");
   const restartMatch = () => sendRoomAction("restart");
@@ -465,17 +531,17 @@ export function useCaroGame() {
       lobbyChannel
         .on(
           "postgres_changes",
-          { event: "INSERT", schema: "public", table: "caro_rooms" },
+          { event: "INSERT", schema: "public", table: "rooms" },
           () => fetchRoomList(),
         )
         .on(
           "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "caro_rooms" },
+          { event: "UPDATE", schema: "public", table: "rooms" },
           () => fetchRoomList(),
         )
         .on(
           "postgres_changes",
-          { event: "DELETE", schema: "public", table: "caro_rooms" },
+          { event: "DELETE", schema: "public", table: "rooms" },
           () => fetchRoomList(),
         )
         .subscribe((status) => {
@@ -495,9 +561,11 @@ export function useCaroGame() {
       userName.value = window.localStorage.getItem("caro-user-name") ?? "";
     }
 
-    // Save username whenever it changes
+    // Save username whenever it changes, but ONLY if NOT logged in (Guest mode)
     watch(userName, (newVal) => {
-      window.localStorage.setItem("caro-user-name", newVal);
+      if (!user.value) {
+        window.localStorage.setItem("caro-user-name", newVal);
+      }
     });
 
     // Global listener for Tab closing
@@ -581,6 +649,7 @@ export function useCaroGame() {
     toggleReady,
     startGame,
     playCell,
+    playChessMove,
     restartMatch,
     sendChatMessage,
     canPlayCell,
@@ -593,5 +662,14 @@ export function useCaroGame() {
     connect,
     connectLobby,
     isRefreshingRoomList,
+    user,
+    userProfile,
+    userStats,
+    fetchUserStats,
+    logout: async () => {
+      await supabase.auth.signOut();
+      userProfile.value = null;
+      userName.value = window.localStorage.getItem("caro-user-name") ?? "";
+    },
   };
 }
